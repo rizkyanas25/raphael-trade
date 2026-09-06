@@ -1,0 +1,132 @@
+# ==============================================================================
+# Environment & Secrets (CRITICAL: Do NOT commit API keys or tokens)
+# ==============================================================================
+.env
+.env.local
+.env.*.local
+*.env
+!*.env.example
+*.pem
+*.key
+*.cert
+*.secret
+
+# ==============================================================================
+# Python & Bytecode
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==============================================================================
+# Virtual Environments
+# ==============================================================================
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# ==============================================================================
+# Databases & Storage
+# ==============================================================================
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+raphael_trades.db
+raphael_data.sqlite3
+paper_trades/
+virtual_data/
+
+# ==============================================================================
+# Logs & Process Files
+# ==============================================================================
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# ==============================================================================
+# IDEs, Editors & Tools
+# ==============================================================================
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# ==============================================================================
+# Testing & Caches
+# ==============================================================================
+.pytest_cache/
+.coverage
+.coverage.*
+.cache/
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ==============================================================================
+# OS Generated Files (macOS & Windows)
+# ==============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# ==============================================================================
+# Temporary Files & Media / Downloads
+# ==============================================================================
+temp/
+tmp/
+*.tmp
+images/
+downloads/
+cache/
+
+# ==============================================================================
+# VM / Disk Images / Large Binaries
+# ==============================================================================
+*.iso
+*.vhd
+*.vhdx
+*.vdi
+*.qcow2
+*.utm

@@ -1,0 +1,38 @@
+# Raphael AI Bot - Dependencies
+# Wisdom Lord Raphael - Core Analytical Engine & Financial Risk Guard
+
+# Telegram Bot
+python-telegram-bot==21.6
+
+# Google Gemini AI (new google-genai SDK)
+google-genai==1.16.0
+
+# Retry Logic
+tenacity==8.5.0
+
+# Configuration & Environment
+python-dotenv==1.0.1
+
+# Data Processing
+pandas==2.2.3
+numpy==1.26.4
+
+# Database
+aiosqlite==0.20.0
+
+# Image Processing
+Pillow==10.4.0
+
+# Timezone Handling
+pytz==2024.2
+
+# Logging
+colorlog==6.8.2
+
+# Type Hints
+typing-extensions==4.12.2
+
+# MT5 Integration - Use mt5-mac for macOS
+# Install with: pip install mt5-mac
+# This works with MetaTrader 5.app on macOS (Intel & Apple Silicon)
+mt5-mac==0.2.2
