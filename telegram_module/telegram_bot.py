@@ -213,7 +213,10 @@ Presisi adalah segalanya, Nyunk-sama. 🛡️
 
         symbol = args[0].upper().strip()
         await self._safe_reply(
-            update, f"🔍 Memulai SMC scan untuk *{symbol}*...", md=True
+            update,
+            f"Memulai analisis spektrum penuh SMC untuk *{symbol}* "
+            f"atas instruksi Nyunk-sama...",
+            md=True
         )
 
         result = await self._run_scan(symbol)
@@ -237,7 +240,7 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
 🛡️ Max Risk/Trade : `${max_risk:.4f} USDT` ({self.config.risk_percent_per_trade:.0f}% equity)
 """)
         except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
+            await update.message.reply_text(f"Anomali terdeteksi: `{e}`", parse_mode="Markdown")
 
     async def _cmd_positions(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorised(update.effective_user.id):
@@ -274,19 +277,23 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
                     )
             await self._safe_reply(update, msg)
         except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
+            await update.message.reply_text(f"Anomali terdeteksi: `{e}`", parse_mode="Markdown")
 
     async def _cmd_cancelall(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorised(update.effective_user.id):
             return
         try:
-            await update.message.reply_text("🗑️ Cancelling all pending orders...")
+            await update.message.reply_text(
+                "Membatalkan seluruh pending orders atas instruksi Nyunk-sama..."
+            )
             n = await self.exchange.cancel_all_orders()
             await update.message.reply_text(
-                f"✅ {n} pending order{'s' if n != 1 else ''} cancelled, Nyunk-sama."
+                f"{n} pending order{'s' if n != 1 else ''} berhasil dibatalkan, Nyunk-sama."
             )
         except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
+            await update.message.reply_text(
+                f"Anomali pada proses cancel orders: `{e}`", parse_mode="Markdown"
+            )
 
     async def _cmd_mode(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorised(update.effective_user.id):
@@ -359,7 +366,7 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
                 )
             await self._safe_reply(update, msg)
         except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
+            await update.message.reply_text(f"Anomali terdeteksi: `{e}`", parse_mode="Markdown")
 
     async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorised(update.effective_user.id):
@@ -377,19 +384,21 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
 
             mode_icon = "🤖" if self.config.is_auto_mode() else "✋"
             await update.message.reply_text(
-                f"🛠️ *System Status — Raphael v2.0*\n\n"
-                f"Bitget API : {'✅ Connected' if bitget_ok else '❌ Error'}\n"
-                f"Gemini AI  : {'✅ Connected' if gemini_ok else '❌ Error'}\n"
-                f"Database   : ✅ Connected\n\n"
-                f"{mode_icon} Mode      : `{self.config.operation_mode.upper()}`\n"
-                f"💰 Equity   : `${equity:.4f} USDT`\n"
-                f"📊 Positions: `{live_active}/{max_pos}` (dynamic limit)\n"
-                f"⚙️ Leverage : `{self.config.default_leverage}x / {self.config.max_leverage}x max`\n"
-                f"🧠 Model    : `{self.config.gemini_model}`",
+                f"*Status Sistem — Wisdom Lord Raphael v2.0*\n\n"
+                f"Bitget API : {'Terhubung' if bitget_ok else 'Anomali — koneksi gagal'}\n"
+                f"Gemini AI  : {'Terhubung' if gemini_ok else 'Anomali — koneksi gagal'}\n"
+                f"Database   : Operasional\n\n"
+                f"Mode       : `{self.config.operation_mode.upper()}`\n"
+                f"Equity     : `${equity:.4f} USDT`\n"
+                f"Positions  : `{live_active}/{max_pos}` slot terpakai\n"
+                f"Leverage   : `{self.config.default_leverage}x default / {self.config.max_leverage}x max`\n"
+                f"Model AI   : `{self.config.gemini_model}`",
                 parse_mode="Markdown",
             )
         except Exception as e:
-            await update.message.reply_text(f"❌ Status check error: {e}")
+            await update.message.reply_text(
+                f"Anomali pada status check: `{e}`", parse_mode="Markdown"
+            )
 
     # ── Inline Button Callbacks ────────────────────────────────────────────
 
@@ -410,7 +419,8 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
             scan_id = data[len(CB_SKIP_PREFIX):]
             self._pending_signals.pop(scan_id, None)
             await query.edit_message_text(
-                f"⏭️ Signal `{scan_id}` skipped by Nyunk-sama.",
+                f"Notifikasi: Keputusan SKIP untuk sinyal `{scan_id}` "
+                f"telah dicatat sesuai kehendak Nyunk-sama.",
                 parse_mode="Markdown",
             )
 
@@ -418,13 +428,15 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
         params = self._pending_signals.get(scan_id)
         if not params:
             await query.edit_message_text(
-                f"⚠️ Signal `{scan_id}` sudah expired atau tidak ditemukan.",
+                f"Anomali: Signal `{scan_id}` sudah expired atau tidak ditemukan "
+                f"dalam buffer aktif.",
                 parse_mode="Markdown",
             )
             return
 
         await query.edit_message_text(
-            f"⚙️ Menempatkan Limit Order untuk `{params.get('symbol')}`...",
+            f"Menempatkan Limit Order untuk `{params.get('symbol')}` "
+            f"sesuai mandat Nyunk-sama...",
             parse_mode="Markdown",
         )
 
@@ -457,24 +469,26 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
             self._pending_signals.pop(scan_id, None)
 
             await query.edit_message_text(
-                f"✅ *Order placed!*\n\n"
-                f"Symbol  : `{params['symbol']}`\n"
-                f"Side    : `{params.get('side', 'N/A')}`\n"
-                f"Entry   : `{params['entry_price']}`\n"
-                f"SL      : `{params['stop_loss']}`\n"
-                f"TP      : `{params['take_profit']}`\n"
-                f"Size    : `{params['position_size']}`\n"
-                f"Leverage: `{params.get('leverage', self.config.default_leverage)}x`\n"
-                f"Risk    : `${params.get('risk_usdt', 0.0):.4f} USDT`\n"
-                f"Order ID: `{order.get('id', 'N/A')}`\n\n"
-                f"Trade ID: `{trade_id}`",
+                f"*Order Tereksekusi.*\n\n"
+                f"Symbol   : `{params['symbol']}`\n"
+                f"Side     : `{params.get('side', 'N/A')}`\n"
+                f"Entry    : `{params['entry_price']}`\n"
+                f"SL       : `{params['stop_loss']}`\n"
+                f"TP       : `{params['take_profit']}`\n"
+                f"Size     : `{params['position_size']}`\n"
+                f"Leverage : `{params.get('leverage', self.config.default_leverage)}x`\n"
+                f"Risk     : `${params.get('risk_usdt', 0.0):.4f} USDT`\n"
+                f"Order ID : `{order.get('id', 'N/A')}`\n"
+                f"Trade ID : `{trade_id}`\n\n"
+                f"Posisi terdaftar dan dipantau, Nyunk-sama.",
                 parse_mode="Markdown",
             )
 
         except Exception as e:
             logger.error(f"❌ _handle_execute_confirm({scan_id}): {e}", exc_info=True)
             await query.edit_message_text(
-                f"❌ Order failed: `{e}`\n\nOrder tidak dieksekusi.",
+                f"Anomali pada eksekusi order `{params.get('symbol', '?')}`:\n"
+                f"`{e}`\n\nOrder tidak dieksekusi. Periksa log, Nyunk-sama.",
                 parse_mode="Markdown",
             )
 
@@ -583,49 +597,45 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
         update: Update,
         result: Dict[str, Any],
     ):
-        """Format and send scan result to Telegram."""
+        """Format and send scan result to Telegram — pure Raphael voice, no static header."""
         symbol   = result.get("symbol", "?")
         scan_id  = result.get("scan_id", "?")
         decision = result.get("decision", "UNKNOWN")
 
         if decision == "ERROR":
             await self._safe_reply(
-                update, f"❌ Scan error untuk *{symbol}*: `{result.get('error')}`"
+                update,
+                f"Anomali terdeteksi pada proses analisis *{symbol}*.\n"
+                f"`{result.get('error')}`\n\n"
+                f"Periksa log eksekusi, Nyunk-sama."
             )
             return
 
         ai_result = result.get("ai_result", {})
         parsed    = ai_result.get("parsed_response", {})
-        analysis  = result.get("analysis")
         params    = parsed.get("parameters", {})
 
-        decision_icon = "✅" if decision == "EXECUTE" else "⏭️"
+        kakunin  = parsed.get("kakunin", "")
+        kai      = parsed.get("kai", "")
+        ze_hi    = parsed.get("ze_hi", "")
+        ze_hi_tag = parsed.get("ze_hi_tag", "")
+        koku     = parsed.get("koku", "")
 
-        msg = (
-            f"🔍 *{symbol}* — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        )
-
-        if analysis:
-            msg += (
-                f"🧭 H1 Bias   : `{analysis.h1_bias}` ({analysis.h1_last_bos})\n"
-                f"🔷 M15 OBs   : `{len(analysis.m15_order_blocks)}` unmitigated\n"
-                f"⚡ M5 CHOCH  : `{analysis.m5_choch_type}`\n"
-                f"🎯 Valid Setup: `{'YES' if analysis.has_valid_setup else 'NO'}`\n\n"
-            )
-
-        msg += f"{decision_icon} *Decision: {decision}*\n\n"
-
-        kakunin = parsed.get("kakunin", "")
-        kai     = parsed.get("kai", "")
-        koku    = parsed.get("koku", "")
+        # Build unified message — Raphael transmits directly
+        msg = f"*Transmisi Analitis SMC: {symbol}*\n"
+        msg += f"`{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`\n\n"
 
         if kakunin:
             msg += f"*<< Kakunin >>*\n{kakunin}\n\n"
         if kai:
             msg += f"*<< Kai >>*\n{kai}\n\n"
+        if ze_hi and ze_hi_tag:
+            tag_label = ze_hi_tag.capitalize()
+            msg += f"*<< {tag_label} >>*\n{ze_hi}\n\n"
         if koku:
             msg += f"*<< Koku >>*\n{koku}\n"
 
+        # Attach inline buttons for EXECUTE in manual mode
         if decision == "EXECUTE" and params:
             if self.config.is_manual_mode():
                 keyboard = InlineKeyboardMarkup([[
@@ -662,7 +672,8 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
             if active >= max_pos:
                 await self._notify(
                     update,
-                    f"⚠️ Auto-execute skipped — {active}/{max_pos} positions occupied.",
+                    f"Slot posisi penuh ({active}/{max_pos}). "
+                    f"Auto-execute dibatalkan, Nyunk-sama.",
                 )
                 return
 
@@ -694,20 +705,21 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
             self._pending_signals.pop(scan_id, None)
             await self._notify(
                 update,
-                f"🤖 *Auto-execute complete!*\n"
-                f"Symbol  : `{symbol}`\n"
-                f"Entry   : `{params['entry_price']}`\n"
-                f"SL      : `{params['stop_loss']}`\n"
-                f"TP      : `{params['take_profit']}`\n"
-                f"Size    : `{params['position_size']}`\n"
-                f"Order ID: `{order.get('id', 'N/A')}`",
+                f"*Mandat Auto-Execute Terkirim.*\n"
+                f"Symbol   : `{symbol}`\n"
+                f"Entry    : `{params['entry_price']}`\n"
+                f"SL       : `{params['stop_loss']}`\n"
+                f"TP       : `{params['take_profit']}`\n"
+                f"Size     : `{params['position_size']}`\n"
+                f"Order ID : `{order.get('id', 'N/A')}`",
             )
 
         except Exception as e:
             logger.error(f"❌ _auto_execute({scan_id}): {e}", exc_info=True)
             await self._notify(
                 update,
-                f"❌ *Auto-execute FAILED* for `{symbol}`:\n`{e}`",
+                f"Anomali pada auto-execute `{symbol}`:\n`{e}`\n\n"
+                f"Order tidak dieksekusi. Periksa log, Nyunk-sama.",
             )
 
     # ── Messaging Helpers ──────────────────────────────────────────────────
@@ -802,7 +814,10 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
         if isinstance(update, Update) and update.effective_message:
             try:
                 await update.effective_message.reply_text(
-                    f"⚠️ System error: `{ctx.error}`", parse_mode="Markdown"
+                    f"Anomali terdeteksi pada modul komunikasi.\n"
+                    f"`{ctx.error}`\n\n"
+                    f"Mohon periksa log eksekusi, Nyunk-sama.",
+                    parse_mode="Markdown",
                 )
             except Exception:
                 pass
