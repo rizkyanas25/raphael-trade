@@ -47,6 +47,15 @@ CB_EXECUTE_PREFIX = "exec:"
 CB_SKIP_PREFIX    = "skip:"
 
 
+def _is_float(value: str) -> bool:
+    """Check if a string can be converted to float."""
+    try:
+        float(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 class RaphaelTelegramBot:
     """
     On-demand Telegram interface for Raphael v2.0.
@@ -87,6 +96,7 @@ class RaphaelTelegramBot:
         app.add_handler(CommandHandler("start",     self._cmd_start))
         app.add_handler(CommandHandler("help",      self._cmd_help))
         app.add_handler(CommandHandler("scan",      self._cmd_scan))
+        app.add_handler(CommandHandler("eval",      self._cmd_eval))
         app.add_handler(CommandHandler("balance",   self._cmd_balance))
         app.add_handler(CommandHandler("positions", self._cmd_positions))
         app.add_handler(CommandHandler("cancelall", self._cmd_cancelall))
@@ -153,6 +163,7 @@ Selamat datang, Nyunk-sama. Sistem siap beroperasi.
 
 *Commands:*
 `/scan SOLUSDT` — SMC scan on-demand
+`/eval JUPUSDT short 0.2477 sl 0.2601 tp 0.2452 0.2405` — evaluasi signal eksternal
 `/balance` — wallet info
 `/positions` — posisi aktif
 `/cancelall` — cancel semua order
@@ -166,33 +177,37 @@ Selamat datang, Nyunk-sama. Sistem siap beroperasi.
 📚 *Raphael v2.0 — Help Guide*
 
 *On-Demand Scan:*
-`/scan SOLUSDT` — jalankan SMC scan lengkap.
-Bot pull candle data dari Bitget → SMC detection →
-Gemini AI analysis → Kakunin/Kai/Koku response.
+`/scan SOLUSDT` — SMC scan lengkap.
+Bot pull candle data Bitget → SMC detection → Gemini analysis.
+Output: Kakunin / Kai / Ze|Hi / Koku.
+Jika ada posisi aktif pada symbol yang di-scan, Raphael sekalian evaluate kondisi posisi tersebut.
+
+*Signal Evaluation (dari grup):*
+`/eval SYMBOL side entry sl SL tp TP1 TP2...`
+Contoh: `/eval JUPUSDT short 0.2477 sl 0.2601 tp 0.2452 0.2405 0.2360`
+Raphael pull data SMC real-time, cross-check dengan signal, dan berikan verdict VALIDATE atau REJECT.
 
 *Manual Mode (default):*
-Setelah EXECUTE signal → muncul tombol ✅ EXECUTE / ❌ SKIP.
-Lu yang putuskan. Bot tidak otomatis order.
+Setelah VALIDATE/EXECUTE → tombol ✅ / ❌ muncul. Lu yang putuskan.
 
 *Auto Mode:*
-Bot langsung pasang Limit Order di Bitget setelah EXECUTE.
-Aktifkan dengan `/mode auto`.
+Bot langsung pasang order. Aktifkan dengan `/mode auto`.
 
 *SMC Rules (tidak bisa dikompromikan):*
 • SL distance ≤ 1.5% dari entry
 • RRR minimum 1:3.0
-• CHOCH M5 wajib terkonfirmasi
+• CHOCH M5 wajib (untuk /scan)
 • H1 Bias NEUTRAL → SKIP
 • Max positions dynamic (equity-based)
 
-*Commands:*
+*Semua Commands:*
 `/scan <SYMBOL>` — scan on-demand
+`/eval <SYMBOL> <side> <entry> sl <SL> tp <TP1> [TP2...]` — eval signal eksternal
 `/balance` — equity, available, uPnL
 `/positions` — posisi running + pending
 `/cancelall` — cancel semua pending order
 `/mode` — lihat mode aktif
-`/mode auto` — aktifkan auto-execute
-`/mode manual` — kembali ke manual
+`/mode auto` / `/mode manual` — ganti mode
 `/history` — 10 trade terakhir + win rate
 `/status` — system health
 
@@ -221,6 +236,251 @@ Presisi adalah segalanya, Nyunk-sama. 🛡️
 
         result = await self._run_scan(symbol)
         await self._deliver_scan_result(update, result)
+
+    async def _cmd_eval(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """
+        Evaluate an external signal against real-time SMC structure.
+
+        Usage:
+          /eval JUPUSDT short 0.2477 sl 0.2601 tp 0.2452 0.2405 0.2360
+          /eval ETHUSDT long 2455 sl 2379 tp 2479 2546 2605
+
+        Parsing rules:
+          - arg[0]  = symbol
+          - arg[1]  = side (long/short/buy/sell)
+          - arg[2]  = entry price
+          - 'sl'    = keyword, next value = stop loss
+          - 'tp'    = keyword, all values after = take profit targets
+        """
+        if not self._is_authorised(update.effective_user.id):
+            await update.message.reply_text("⛔ Access denied.")
+            return
+
+        args = ctx.args or []
+
+        # ── Parse arguments ────────────────────────────────────────────────
+        usage_msg = (
+            "Format: `/eval SYMBOL side entry sl SL tp TP1 [TP2...]`\n"
+            "Contoh: `/eval JUPUSDT short 0.2477 sl 0.2601 tp 0.2452 0.2405`"
+        )
+
+        if len(args) < 6:
+            await update.message.reply_text(usage_msg, parse_mode="Markdown")
+            return
+
+        try:
+            symbol = args[0].upper().strip()
+            side   = args[1].lower().strip()
+
+            if side not in ("long", "short", "buy", "sell"):
+                await update.message.reply_text(
+                    f"Side tidak valid: `{side}`. Gunakan long/short.",
+                    parse_mode="Markdown"
+                )
+                return
+
+            # Normalise side
+            side = "LONG" if side in ("long", "buy") else "SHORT"
+
+            entry = float(args[2])
+
+            # Find sl and tp keywords
+            args_lower = [a.lower() for a in args]
+            sl_idx = next((i for i, a in enumerate(args_lower) if a == "sl"), None)
+            tp_idx = next((i for i, a in enumerate(args_lower) if a == "tp"), None)
+
+            if sl_idx is None or tp_idx is None:
+                await update.message.reply_text(usage_msg, parse_mode="Markdown")
+                return
+
+            stop_loss    = float(args[sl_idx + 1])
+            take_profits = [float(v) for v in args[tp_idx + 1:] if _is_float(v)]
+
+            if not take_profits:
+                await update.message.reply_text(
+                    "Minimal 1 TP target diperlukan.", parse_mode="Markdown"
+                )
+                return
+
+        except (ValueError, IndexError):
+            await update.message.reply_text(usage_msg, parse_mode="Markdown")
+            return
+
+        # ── Notify user ────────────────────────────────────────────────────
+        tp_preview = " / ".join(str(t) for t in take_profits)
+        await self._safe_reply(
+            update,
+            f"Memulai evaluasi signal eksternal untuk *{symbol}* "
+            f"{side} entry `{entry}` | SL `{stop_loss}` | TP `{tp_preview}`\n\n"
+            f"Menarik data SMC real-time atas instruksi Nyunk-sama...",
+            md=True
+        )
+
+        # ── Run eval pipeline ──────────────────────────────────────────────
+        result = await self._run_eval(
+            symbol=symbol,
+            side=side,
+            entry=entry,
+            stop_loss=stop_loss,
+            take_profits=take_profits,
+        )
+        await self._deliver_eval_result(update, result)
+
+    async def _run_eval(
+        self,
+        symbol: str,
+        side: str,
+        entry: float,
+        stop_loss: float,
+        take_profits: list,
+        source: str = "William Dawson Trades / External",
+    ) -> Dict[str, Any]:
+        """Full eval pipeline — same as _run_scan but uses evaluate_signal()."""
+        scan_id = f"eval_{symbol}_{side}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        logger.info(f"🔎 Starting eval: {scan_id}")
+
+        try:
+            # Fetch candles concurrently
+            h1_candles, m15_candles, m5_candles = await asyncio.gather(
+                self.exchange.fetch_ohlcv(symbol, "H1",  limit=100),
+                self.exchange.fetch_ohlcv(symbol, "M15", limit=100),
+                self.exchange.fetch_ohlcv(symbol, "M5",  limit=100),
+            )
+
+            analysis    = self.detector.analyse(symbol, h1_candles, m15_candles, m5_candles)
+            smc_section = self.detector.build_gemini_prompt_section(analysis)
+
+            balance, positions, open_orders = await asyncio.gather(
+                self.exchange.fetch_balance(),
+                self.exchange.fetch_positions(),
+                self.exchange.fetch_open_orders(),
+            )
+
+            equity      = balance.get("equity_usdt", 0.0)
+            max_pos     = self.config.get_max_positions(equity)
+            live_active = len(positions) + len(open_orders)
+
+            ai_result = await self.gemini.evaluate_signal(
+                symbol             = symbol,
+                side               = side,
+                entry              = entry,
+                stop_loss          = stop_loss,
+                take_profits       = take_profits,
+                smc_data           = analysis.to_dict(),
+                balance_data       = balance,
+                positions          = positions,
+                open_orders        = open_orders,
+                smc_prompt_section = smc_section,
+                live_active        = live_active,
+                max_pos            = max_pos,
+                source             = source,
+            )
+
+            parsed   = ai_result.get("parsed_response", {})
+            decision = parsed.get("decision", "UNKNOWN")
+
+            # Cache for manual confirmation if VALIDATE
+            if decision in ("VALIDATE", "EXECUTE") and parsed.get("parameters"):
+                params = parsed["parameters"]
+                params["symbol"] = symbol
+                self._pending_signals[scan_id] = params
+
+            # Save to DB as scan record
+            await self.db.save_scan({
+                "scan_id":         scan_id,
+                "symbol":          symbol,
+                "h1_bias":         analysis.h1_bias,
+                "h1_bos":          analysis.h1_last_bos,
+                "m5_choch":        analysis.m5_choch_type,
+                "has_valid_setup": analysis.has_valid_setup,
+                "setup_bias":      analysis.setup_bias,
+                "skip_reason":     analysis.skip_reason,
+                "parsed_response": parsed,
+                "processing_time": ai_result.get("processing_time", 0.0),
+            })
+
+            return {
+                "scan_id":     scan_id,
+                "symbol":      symbol,
+                "side":        side,
+                "entry":       entry,
+                "stop_loss":   stop_loss,
+                "take_profits": take_profits,
+                "decision":    decision,
+                "analysis":    analysis,
+                "ai_result":   ai_result,
+            }
+
+        except Exception as e:
+            logger.error(f"❌ _run_eval({symbol}): {e}", exc_info=True)
+            return {
+                "scan_id":  scan_id,
+                "symbol":   symbol,
+                "decision": "ERROR",
+                "error":    str(e),
+            }
+
+    async def _deliver_eval_result(
+        self,
+        update: Update,
+        result: Dict[str, Any],
+    ):
+        """Format and send eval result to Telegram."""
+        symbol   = result.get("symbol", "?")
+        scan_id  = result.get("scan_id", "?")
+        decision = result.get("decision", "UNKNOWN")
+
+        if decision == "ERROR":
+            await self._safe_reply(
+                update,
+                f"Anomali terdeteksi pada evaluasi signal *{symbol}*.\n"
+                f"`{result.get('error')}`\n\nPeriksa log eksekusi, Nyunk-sama."
+            )
+            return
+
+        ai_result = result.get("ai_result", {})
+        parsed    = ai_result.get("parsed_response", {})
+        params    = parsed.get("parameters", {})
+
+        kakunin   = parsed.get("kakunin", "")
+        kai       = parsed.get("kai", "")
+        ze_hi     = parsed.get("ze_hi", "")
+        ze_hi_tag = parsed.get("ze_hi_tag", "")
+        koku      = parsed.get("koku", "")
+
+        msg = (
+            f"*Evaluasi Signal Eksternal: {symbol}*\n"
+            f"`{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`\n"
+            f"Entry `{result.get('entry')}` | SL `{result.get('stop_loss')}` | "
+            f"TP `{' / '.join(str(t) for t in result.get('take_profits', []))}`\n\n"
+        )
+
+        if kakunin:
+            msg += f"*<< Kakunin >>*\n{kakunin}\n\n"
+        if kai:
+            msg += f"*<< Kai >>*\n{kai}\n\n"
+        if ze_hi and ze_hi_tag:
+            msg += f"*<< {ze_hi_tag.capitalize()} >>*\n{ze_hi}\n\n"
+        if koku:
+            msg += f"*<< Koku >>*\n{koku}\n"
+
+        # Attach confirm buttons if VALIDATE in manual mode
+        if decision in ("VALIDATE", "EXECUTE") and params:
+            if self.config.is_manual_mode():
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "✅ EXECUTE", callback_data=f"{CB_EXECUTE_PREFIX}{scan_id}"
+                    ),
+                    InlineKeyboardButton(
+                        "❌ SKIP",    callback_data=f"{CB_SKIP_PREFIX}{scan_id}"
+                    ),
+                ]])
+                await self._notify(update, msg, reply_markup=keyboard)
+            else:
+                await self._notify(update, msg)
+                await self._auto_execute(scan_id, symbol, params, update)
+        else:
+            await self._notify(update, msg)
 
     async def _cmd_balance(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._is_authorised(update.effective_user.id):

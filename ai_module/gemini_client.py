@@ -9,7 +9,7 @@ Kakunin / Kai / Koku structured response.
 import asyncio
 import logging
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 from google import genai
@@ -228,26 +228,61 @@ Slots Available : {slots_left}
 {"⚠️ POSITION LIMIT REACHED — Rule 5: SKIP semua setup" if slots_left == 0 else f"✅ {slots_left} slot tersedia untuk entry baru"}
 """
 
-        # ── Active positions detail ────────────────────────────────────────
-        if positions:
-            prompt += "\nACTIVE POSITIONS:\n"
-            for p in positions:
+        # ── Symbol-specific position context (most important for Kai analysis) ──
+        # Filter positions/orders for the symbol being scanned
+        sym_clean = symbol.upper().replace("/USDT:USDT", "USDT")
+        symbol_positions = [
+            p for p in positions
+            if p.get("symbol", "").upper().replace("/USDT:USDT", "USDT") == sym_clean
+        ]
+        symbol_orders = [
+            o for o in open_orders
+            if o.get("symbol", "").upper().replace("/USDT:USDT", "USDT") == sym_clean
+        ]
+
+        if symbol_positions or symbol_orders:
+            prompt += f"\nPOSISI AKTIF PADA {symbol}:\n"
+            for p in symbol_positions:
+                upnl_pos = p.get("unrealized_pnl", 0.0)
+                upnl_pct = (upnl_pos / (p.get("size", 1) * p.get("entry_price", 1))) * 100 if p.get("entry_price") else 0
+                prompt += (
+                    f"  • {p.get('side')} | Size: {p.get('size')} "
+                    f"| Entry: {p.get('entry_price')} "
+                    f"| Mark: {p.get('mark_price')} "
+                    f"| uPnL: ${upnl_pos:.4f} ({upnl_pct:+.2f}%)"
+                    f"| Leverage: {p.get('leverage')}x"
+                    f"| Liq: {p.get('liquidation_price')}\n"
+                )
+            for o in symbol_orders:
+                prompt += (
+                    f"  • PENDING {o.get('side', '').upper()} "
+                    f"| Limit: {o.get('price')} "
+                    f"| Amount: {o.get('amount')} "
+                    f"| ID: {o.get('order_id')}\n"
+                )
+            prompt += (
+                f"\nPERHATIAN: Raphael wajib mengevaluasi apakah posisi {symbol} "
+                f"yang sedang berjalan masih valid berdasarkan struktur SMC terkini. "
+                f"Jika ada pergeseran struktur yang signifikan, sampaikan di << Kai >>.\n"
+            )
+        else:
+            prompt += f"\nTidak ada posisi atau pending order aktif pada {symbol}.\n"
+
+        # ── All other positions (context only) ───────────────────────────
+        other_positions = [p for p in positions if p not in symbol_positions]
+        other_orders    = [o for o in open_orders if o not in symbol_orders]
+        if other_positions or other_orders:
+            prompt += "\nPOSISI LAIN (context):\n"
+            for p in other_positions:
                 prompt += (
                     f"  • {p.get('symbol')} {p.get('side')} "
-                    f"| Size: {p.get('size')} "
                     f"| Entry: {p.get('entry_price')} "
                     f"| uPnL: ${p.get('unrealized_pnl', 0):.4f}\n"
                 )
-
-        # ── Pending orders detail ──────────────────────────────────────────
-        if open_orders:
-            prompt += "\nPENDING ORDERS:\n"
-            for o in open_orders:
+            for o in other_orders:
                 prompt += (
-                    f"  • {o.get('symbol')} {o.get('side')} "
-                    f"| Type: {o.get('type')} "
-                    f"| Price: {o.get('price')} "
-                    f"| Amount: {o.get('amount')}\n"
+                    f"  • PENDING {o.get('symbol')} {o.get('side', '').upper()} "
+                    f"| Limit: {o.get('price')}\n"
                 )
 
         # ── SMC algorithmic data ───────────────────────────────────────────
@@ -412,6 +447,252 @@ Modal Nyunk-sama: ~${equity:.2f} USDT. Precision over frequency.
 
         logger.debug(f"🧠 Extracted order params: {params}")
         return params
+
+    # ── External Signal Evaluation ─────────────────────────────────────────
+
+    EVAL_SYSTEM_PROMPT = """
+[SYSTEM INSTRUCTION: ABSOLUTE RAPHAEL PROTOCOL V2 — SIGNAL EVALUATION MODE]
+
+Identitas & Kepribadian: sama seperti mode scan — Wisdom Lord Raphael, dingin, presisi, loyal.
+
+Mode ini diaktifkan saat Nyunk-sama menerima signal dari sumber eksternal (grup trading)
+dan meminta saya untuk mengevaluasi kelayakannya berdasarkan data pasar real-time.
+
+Format Output WAJIB — 5 blok:
+
+<< Kakunin >>
+- Symbol & side yang dievaluasi
+- Sumber signal: eksternal (nama grup jika diketahui)
+- Parameter signal yang diterima: Entry, SL, TP targets
+- Status wallet & slot posisi
+- H1 Bias algoritmik dari data real-time
+
+<< Kai >>
+Evaluasi signal vs struktur pasar real-time:
+  * Apakah Entry price aligned dengan OB atau demand/supply zone?
+  * Apakah SL sudah di luar struktur yang relevan (bukan terlalu tight)?
+  * Apakah TP pertama realistis berdasarkan liquidity target terdekat?
+  * Cross-check: apakah direction signal sesuai H1 Bias?
+  * Hitung SL distance % dari entry — apakah ≤ 1.5%?
+  * Hitung RRR ke TP1, TP2 (berdasarkan equity Nyunk-sama)
+  * Rekomendasikan leverage yang aman untuk modal kecil ini
+
+<< Ze >> atau << Hi >>
+Satu baris verdict: apakah signal layak diikuti atau tidak.
+
+<< Koku >>
+"VALIDATE" jika signal layak — sertakan adjusted parameters jika perlu:
+  Pair Symbol   : [symbol]
+  Side          : [LONG/SHORT]
+  Order Type    : [Limit/Market]
+  Entry Price   : [dari signal atau adjusted]
+  Stop Loss     : [dari signal — valid atau perlu adjust?]
+  Take Profit   : [TP1 yang paling realistis]
+  Position Size : [kalkulasi berdasarkan equity & SL distance]
+  Leverage      : [rekomendasi aman untuk modal Nyunk-sama]
+  Risk USDT     : [nilai]
+  RRR           : [ke TP1]
+
+"REJECT" jika signal tidak layak — jelaskan alasan spesifik dalam 2-3 kalimat.
+  Sebutkan: apakah bertentangan dengan SMC structure, SL terlalu wide, atau RRR tidak layak.
+
+Catatan penting:
+- Signal dari grup bisa valid tapi tidak cocok untuk modal kecil ($5-$35) — ini juga alasan REJECT
+- Leverage rekomendasi grup (15x-20x) mungkin terlalu tinggi untuk modal Nyunk-sama
+- Selalu prioritaskan keselamatan modal di atas mengikuti signal orang lain
+"""
+
+    @with_retry(max_attempts=3, base_delay=2, exceptions=(Exception,))
+    async def evaluate_signal(
+        self,
+        symbol: str,
+        side: str,
+        entry: float,
+        stop_loss: float,
+        take_profits: List[float],
+        smc_data: Dict[str, Any],
+        balance_data: Dict[str, Any],
+        positions: list,
+        open_orders: list,
+        smc_prompt_section: str,
+        live_active: int = 0,
+        max_pos: int = 1,
+        source: str = "external",
+    ) -> Dict[str, Any]:
+        """
+        Evaluate an external signal against real-time SMC structure.
+        Returns same format as analyse_smc for consistency.
+        """
+        start = datetime.now()
+
+        prompt = self._build_eval_prompt(
+            symbol=symbol,
+            side=side,
+            entry=entry,
+            stop_loss=stop_loss,
+            take_profits=take_profits,
+            smc_data=smc_data,
+            balance=balance_data,
+            positions=positions,
+            open_orders=open_orders,
+            smc_section=smc_prompt_section,
+            live_active=live_active,
+            max_pos=max_pos,
+            source=source,
+        )
+
+        logger.info(
+            f"🔎 Evaluating external signal | {symbol} {side} "
+            f"entry={entry} sl={stop_loss} tp={take_profits}"
+        )
+
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
+            model=self.config.gemini_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=self.EVAL_SYSTEM_PROMPT,
+                temperature=0.2,
+                top_p=0.85,
+                top_k=40,
+                max_output_tokens=4096,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
+            ),
+        )
+
+        elapsed  = (datetime.now() - start).total_seconds()
+        raw_text = self._extract_text(response)
+        logger.info(
+            f"🔎 Eval response in {elapsed:.2f}s\n"
+            + "=" * 60 + f"\n{raw_text}\n" + "=" * 60
+        )
+
+        parsed = self._parse_eval_response(raw_text)
+
+        return {
+            "raw_response":    raw_text,
+            "parsed_response": parsed,
+            "processing_time": elapsed,
+            "model_used":      self.config.gemini_model,
+            "timestamp":       datetime.now().isoformat(),
+        }
+
+    def _build_eval_prompt(
+        self,
+        symbol: str,
+        side: str,
+        entry: float,
+        stop_loss: float,
+        take_profits: List[float],
+        smc_data: Dict[str, Any],
+        balance: Dict[str, Any],
+        positions: list,
+        open_orders: list,
+        smc_section: str,
+        live_active: int,
+        max_pos: int,
+        source: str,
+    ) -> str:
+        equity    = balance.get("equity_usdt", 0.0)
+        available = balance.get("available_usdt", 0.0)
+        max_risk  = self.config.get_max_risk_usdt(equity)
+        slots_left = max(0, max_pos - live_active)
+
+        # SL distance pre-calc for quick context
+        sl_dist_pct = abs(entry - stop_loss) / entry * 100 if entry else 0
+        tp_str = " / ".join(str(t) for t in take_profits)
+
+        # RRR to TP1
+        if take_profits and entry and stop_loss:
+            reward = abs(take_profits[0] - entry)
+            risk   = abs(entry - stop_loss)
+            rrr_tp1 = round(reward / risk, 2) if risk else 0
+        else:
+            rrr_tp1 = 0
+
+        prompt = f"""
+RAPHAEL PROTOCOL V2 — SIGNAL EVALUATION MODE
+Timestamp : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Symbol    : {symbol}
+Source    : {source}
+
+═══════════════════════════════════════
+SIGNAL PARAMETER (FROM EXTERNAL SOURCE)
+═══════════════════════════════════════
+Side          : {side.upper()}
+Entry Price   : {entry}
+Stop Loss     : {stop_loss}
+Take Profits  : {tp_str}
+SL Distance   : {sl_dist_pct:.2f}% from entry
+RRR to TP1    : 1:{rrr_tp1} (raw, belum adjusted untuk modal Nyunk-sama)
+
+═══════════════════════════════════════
+WALLET STATUS
+═══════════════════════════════════════
+Total Equity  : ${equity:.4f} USDT
+Available     : ${available:.4f} USDT
+Max Risk/Trade: ${max_risk:.4f} USDT ({self.config.risk_percent_per_trade:.0f}% equity)
+Slots         : {live_active}/{max_pos} terpakai | {slots_left} tersedia
+{"⚠️ SLOT PENUH — evaluasi tetap dilakukan tapi eksekusi tidak memungkinkan" if slots_left == 0 else ""}
+"""
+        # Symbol-specific positions
+        sym_clean = symbol.upper().replace("/USDT:USDT", "USDT")
+        sym_pos   = [p for p in positions if p.get("symbol", "").upper().replace("/USDT:USDT", "USDT") == sym_clean]
+        sym_ord   = [o for o in open_orders if o.get("symbol", "").upper().replace("/USDT:USDT", "USDT") == sym_clean]
+
+        if sym_pos or sym_ord:
+            prompt += f"\nPOSISI AKTIF PADA {symbol}:\n"
+            for p in sym_pos:
+                prompt += (
+                    f"  • {p.get('side')} Entry: {p.get('entry_price')} "
+                    f"| Mark: {p.get('mark_price')} "
+                    f"| uPnL: ${p.get('unrealized_pnl', 0):.4f} "
+                    f"| Liq: {p.get('liquidation_price')}\n"
+                )
+            for o in sym_ord:
+                prompt += f"  • PENDING {o.get('side','').upper()} @ {o.get('price')}\n"
+
+        prompt += f"\n{smc_section}\n"
+
+        prompt += f"""
+═══════════════════════════════════════
+RISK PARAMETERS
+═══════════════════════════════════════
+Max SL Distance : {self.config.max_sl_distance_percent:.1f}% (jika signal SL > ini, pertimbangkan REJECT untuk modal kecil)
+Min RRR         : 1:{self.config.min_rrr}
+Max Leverage    : {self.config.max_leverage}x
+Modal Nyunk-sama: ~${equity:.2f} USDT (sangat kecil — size harus disesuaikan)
+
+═══════════════════════════════════════
+INSTRUKSI EVALUASI
+═══════════════════════════════════════
+Evaluasi signal {side.upper()} {symbol} dari sumber eksternal di atas.
+Cross-check dengan data SMC real-time yang tersedia.
+Output WAJIB: Kakunin → Kai → Ze/Hi → Koku (VALIDATE atau REJECT).
+
+Jika SL distance {sl_dist_pct:.2f}% > {self.config.max_sl_distance_percent}%:
+Signal mungkin valid untuk trader dengan modal besar, tapi untuk modal ${equity:.2f}
+position size akan sangat kecil dan mungkin di bawah minimum notional Bitget ($5).
+Perhitungkan ini dalam keputusan.
+"""
+        return prompt
+
+    def _parse_eval_response(self, raw: str) -> Dict[str, Any]:
+        """Parse eval response — same structure as _parse_response but decision is VALIDATE/REJECT."""
+        parsed = self._parse_response(raw)
+
+        # Override decision detection for eval mode
+        koku = parsed.get("koku", "") or raw
+        if re.search(r"\bVALIDATE\b", koku, re.IGNORECASE):
+            parsed["decision"] = "VALIDATE"
+            parsed["parameters"] = self._extract_order_params(koku)
+        elif re.search(r"\bREJECT\b", koku, re.IGNORECASE):
+            parsed["decision"] = "REJECT"
+        # Keep EXECUTE/SKIP as fallback if model uses those instead
+
+        return parsed
 
     # ── Connection Test ────────────────────────────────────────────────────
 
