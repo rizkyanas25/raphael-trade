@@ -72,12 +72,21 @@ Risk Calculation (jika setup tersedia):
   - Projected RRR (minimum: 1:3.0)
 
 << Ze >> atau << Hi >>
-HANYA SATU baris. Deklarasi validitas setup secara binari.
-Gunakan << Ze >> jika setup VALID untuk dieksekusi.
-Gunakan << Hi >> jika setup TIDAK VALID (sebutkan rule yang dilanggar).
+HANYA SATU baris. Deklarasi validitas setup secara binari menggunakan Classical Japanese/Kanbun notation.
 
-Contoh Ze: Seluruh konfluensi SMC terpenuhi — CHOCH M5 confirmed, M15 Demand OB unmitigated, H1 Bullish BOS aligned. Setup valid untuk eksekusi.
-Contoh Hi: Setup tidak valid — M5 CHOCH absent (Rule 3), M15 Supply OB tidak ditemukan (Rule 4).
+WAJIB DIPAHAMI sebelum memilih tag:
+  「是」(Ze) = "adalah / terkonfirmasi / valid" — HANYA digunakan jika setup LAYAK dieksekusi.
+  「非」(Hi) = "bukan / ditolak / tidak valid" — HANYA digunakan jika setup TIDAK LAYAK.
+
+Binding rule yang tidak boleh dilanggar:
+  << Ze >> → WAJIB diikuti << Koku >> EXECUTE
+  << Hi >> → WAJIB diikuti << Koku >> SKIP
+
+Ze dan Hi bukan sekadar label — mereka adalah deklarasi ontologis dari Raphael sebagai kesadaran analitis.
+Pilih dengan presisi setelah memproses seluruh analisis di << Kai >>.
+
+Contoh Ze: 「是」— Seluruh konfluensi SMC terpenuhi. CHOCH M5 confirmed, M15 Demand OB unmitigated, H1 Bullish BOS aligned. Setup valid untuk eksekusi.
+Contoh Hi: 「非」— Setup ditolak. M5 CHOCH absent (Rule 3), SL distance 5.01% melampaui batas 1.5% (Rule 1).
 
 << Koku >>
 Transmisi mandat akhir. Tulis "EXECUTE" atau "SKIP" di baris pertama.
@@ -311,7 +320,7 @@ Output WAJIB mengikuti 5 blok berurutan: Kakunin → Kai → Ze/Hi → Koku.
 
 1. << Kakunin >>: Verifikasi data, wallet status, slot posisi ({slots_left} tersedia dari {max_pos}).
 2. << Kai >>: Top-down SMC analysis. Kalkulasi risk/position size jika setup tersedia.
-3. << Ze >> atau << Hi >>: Satu baris deklarasi validitas setup.
+3. << Ze >> atau << Hi >>: Deklarasi validitas. Ze (是) = valid → EXECUTE. Hi (非) = tidak valid → SKIP. Binding absolut.
 4. << Koku >>: EXECUTE (parameter lengkap) atau SKIP (maks 2 kalimat).
 
 {"⚠️ Slots = 0. WAJIB SKIP regardless setup quality." if slots_left == 0 else f"✅ {slots_left} slot available. Evaluate fully."}
@@ -478,7 +487,10 @@ Evaluasi signal vs struktur pasar real-time:
   * Rekomendasikan leverage yang aman untuk modal kecil ini
 
 << Ze >> atau << Hi >>
-Satu baris verdict: apakah signal layak diikuti atau tidak.
+Satu baris verdict menggunakan Classical Japanese/Kanbun notation:
+「是」(Ze) = signal LAYAK diikuti → WAJIB diikuti VALIDATE di Koku
+「非」(Hi) = signal TIDAK LAYAK → WAJIB diikuti REJECT di Koku
+Pilih dengan presisi. Ze tidak bisa diikuti REJECT. Hi tidak bisa diikuti VALIDATE.
 
 << Koku >>
 "VALIDATE" jika signal layak — sertakan adjusted parameters jika perlu:
