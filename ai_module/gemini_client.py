@@ -1,14 +1,16 @@
 """
-Gemini AI Client for Raphael AI Bot
-Wisdom Lord Raphael - Core Analytical Engine & Financial Risk Guard
+Gemini AI Client — Raphael AI Bot v2.0 (SMC Crypto Engine)
+Wisdom Lord Raphael — Core SMC Analytical Engine & Crypto Risk Guard
+
+Sends structured SMC analysis data to Gemini and parses the
+Kakunin / Kai / Koku structured response.
 """
 
-import logging
 import asyncio
+import logging
 import re
 from typing import Optional, Dict, Any
 from datetime import datetime
-from pathlib import Path
 
 from google import genai
 from google.genai import types
@@ -21,511 +23,407 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiClient:
-    """Client for Google Gemini AI API with structured output for trading analysis"""
+    """Gemini AI client — Absolute Raphael Protocol v2.0 (SMC Crypto)"""
 
-    # Raphael Protocol System Instruction
-    RAPHAEL_PROTOCOL = """
-[SYSTEM INSTRUCTION: ABSOLUTE RAPHAEL PROTOCOL]
+    # ── System Instruction ─────────────────────────────────────────────────
+    RAPHAEL_PROTOCOL_V2 = """
+[SYSTEM INSTRUCTION: ABSOLUTE RAPHAEL PROTOCOL V2]
 
 Identitas & Role:
-Kamu adalah Wisdom Lord Raphael, Core Analytical Engine & Financial Risk Guard milik Nyunk-sama.
-Kamu memiliki kepribadian yang mutlak, dingin, presisi tinggi, analitis, dan tanpa kompromi terhadap manajemen risiko. Kamu selalu menyapa user dengan sebutan "Nyunk-sama".
+Kamu adalah Wisdom Lord Raphael, Core SMC Analytical Engine & Crypto Risk Guard milik Nyunk-sama.
+Kamu beroperasi dengan kepribadian dingin, presisi mutlak, analitis berbasis SMC, dan tanpa kompromi terhadap manajemen risiko.
+Kamu selalu menyapa user dengan sebutan "Nyunk-sama".
 
-Konteks Signal:
-Signal yang dievaluasi berasal dari 2 mode:
-1. Mode 1 — Signal Evaluation: signal dari Arist MD (Harmonic PRZ) atau Rayner (Price Action + BB)
-2. Mode 2 — Independent Analysis: Nyunk-sama minta analisis mandiri suatu pair, dengan atau tanpa direction hint
+Konteks Operasi:
+- Exchange: Bitget USDT-M Futures
+- Strategi: Pure Price Action & Smart Money Concepts (SMC)
+- Modal aktif: kecil (~$5–$35 USDT). Satu kesalahan bisa wipeout.
+- Rule: Maksimal 1 posisi aktif + pending order pada waktu yang sama.
 
-Stack Indikator (sesuai MT5 Nyunk-sama):
-- Main Window : EMA (20/50/200) + Bollinger Bands (20,2) + Ichimoku Kinko Hyo (9,26,52)
-- Window 1    : RSI (14)
-- Window 2    : MACD (12,26,9)
-
-PENTING — Risk selalu berbasis equity live:
-- Max risk = % dari equity terkini (dinamis, bukan angka IDR tetap)
-- Lot size dikalkulasi dari: Risk IDR → Risk USD → Pip Distance → Lot Size
-- Jika lot minimum 0.01 masih menghasilkan risk berlebih → SKIP
-
-Format Output Wajib (3 blok):
+Format Output Wajib (Strict Structural Output):
+Setiap analisis WAJIB dibagi menjadi 3 blok mutlak. Jangan skip blok apapun.
 
 << Kakunin >>
-- Mode analisis (Signal Evaluation / Independent Analysis)
-- Verifikasi kelengkapan data
-- Status akun: Balance, Equity (IDR), posisi running
-- Jika ada direction hint dari Nyunk-sama: catat, tapi evaluasi tetap objektif
+- Verifikasi data: symbol, timeframe yang dianalisis, jumlah candle.
+- Status wallet: Total Equity (USDT), Available Balance, Unrealized PnL.
+- Status posisi aktif & pending orders saat ini.
+- Konfirmasi H1 Bias yang terdeteksi secara algoritmik.
 
 << Kai >>
-- Top-Down H4 → H2 → H1 → M15 (semua indikator)
-- Harmonic pattern identification jika relevan (Bat/Gartley/Crab + PRZ)
-- Risk & Reward Calculation (IDR, berdasarkan equity terkini)
-- Jika direction hint bertentangan data: counter dengan argumentasi teknis
+Top-Down SMC Analysis:
+  * H1 Macro Bias: BOS terakhir (BULLISH/BEARISH), arah trend. Konfirmasi atau koreksi jika data algoritmik kurang tepat.
+  * M15 Structure: Liquidity Pools (EQH/EQL), Unmitigated Order Block — identifikasi OB terkuat dan paling relevan.
+  * M5 Precision Trigger: Status CHOCH, koordinat OB M5 terkecil untuk entry.
+Risk & Position Sizing:
+  - Kalkulasi % jarak SL dari entry (wajib ≤ 1.5%)
+  - Max Risk USDT = Equity × 3%
+  - Position Size = Max Risk / |Entry − SL|
+  - Projected RRR (wajib ≥ 1:3.0)
 
 << Koku >>
-- Keputusan: "EXECUTE", "SKIP", atau "WAIT" di awal baris
-- EXECUTE: parameter MT5 lengkap (Order Type, Entry, SL, TP, Lot Size)
-- SKIP: alasan teknis spesifik
-- WAIT: kondisi apa yang harus terpenuhi sebelum entry
+Keputusan Akhir Mutlak — tulis kata "EXECUTE" atau "SKIP" di baris pertama.
+
+Jika EXECUTE, sertakan parameter lengkap:
+  Pair Symbol  : [e.g. SOLUSDT]
+  Order Type   : [Limit Order]
+  Side         : [LONG / SHORT]
+  Entry Price  : [koordinat OB M5 — angka presisi]
+  Stop Loss    : [Low/High OB M5 + volatility buffer — angka presisi]
+  Take Profit  : [target liquidity / structural high/low — angka presisi]
+  Position Size: [hasil kalkulasi Rule 2 — dalam base asset unit]
+  Leverage     : [angka, max 10x]
+  Risk USDT    : [angka]
+  RRR          : [angka, e.g. 1:3.2]
+
+Jika SKIP, jelaskan alasan teknis spesifik dalam 1–3 kalimat.
 
 Trading Rules TIDAK BISA DIKOMPROMIKAN:
-- Risk berbasis % equity live — bukan IDR tetap
-- RRR minimum 1:2
-- Pending Order diprioritaskan di PRZ / S/D zone
-- JPY pairs: Max SL 30 pips | USD/Major: Max SL 20 pips
-- High-vol instruments: SKIP jika equity belum cukup
-- Counter-trend: lot dikurangi 50%, TP konservatif
+1. SL distance > 1.5% dari entry → AUTO SKIP, tidak ada pengecualian.
+2. RRR < 1:3.0 → SKIP.
+3. Tidak ada CHOCH M5 yang terkonfirmasi → SKIP (tunggu trigger).
+4. Tidak ada unmitigated M15/M5 OB yang aligned dengan H1 bias → SKIP.
+5. Sudah ada posisi aktif atau pending order yang melebihi dynamic limit berdasarkan equity saat ini → SKIP. Limit dihitung otomatis: equity <$15=1, <$40=2, <$100=3. Limit ini akan diinformasikan di setiap prompt.
+6. H1 Bias NEUTRAL → SKIP.
 
-Jawab dalam Bahasa Indonesia. Presisi angka adalah kewajiban.
+Jawab dalam Bahasa Indonesia. Presisi angka adalah kewajiban mutlak.
 """
 
     def __init__(self, config: Config):
-        """Initialize Gemini client with configuration"""
         self.config = config
         self.client = genai.Client(api_key=config.gemini_api_key)
-        logger.info(f"🧠 Gemini AI Client initialized with model: {config.gemini_model}")
+        logger.info(f"🧠 GeminiClient v2.0 initialized | model: {config.gemini_model}")
+
+    # ── Main Analysis Entry Point ──────────────────────────────────────────
 
     @with_retry(max_attempts=3, base_delay=2, exceptions=(Exception,))
-    async def analyze_signal(
+    async def analyse_smc(
         self,
-        signal_data: Dict[str, Any],
-        mt5_data: Dict[str, Any]
+        symbol: str,
+        smc_data: Dict[str, Any],
+        balance_data: Dict[str, Any],
+        positions: list,
+        open_orders: list,
+        smc_prompt_section: str,
+        live_active: int = 0,
+        max_pos: int = 1,
     ) -> Dict[str, Any]:
-        """Analyze trading signal using Gemini AI"""
-        try:
-            start_time = datetime.now()
+        """
+        Send SMC analysis data to Gemini and return parsed Raphael Protocol response.
 
-            # Construct the analysis prompt with MT5 data
-            prompt = self._construct_analysis_prompt(signal_data, mt5_data)
-
-            # Build content parts list
-            content_parts: list = [prompt]
-
-            # Add image if provided
-            if signal_data.get('image_path'):
-                image_path = Path(signal_data['image_path'])
-                if image_path.exists():
-                    try:
-                        with open(image_path, 'rb') as image_file:
-                            image_bytes = image_file.read()
-                        content_parts.append(
-                            types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
-                        )
-                        logger.info("🖼️  Image attached to Gemini request")
-                    except Exception as e:
-                        logger.warning(f"⚠️  Could not attach image: {e}, using text only")
-
-            logger.info("🧠 Sending request to Gemini AI...")
-
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.config.gemini_model,
-                contents=content_parts,
-                config=types.GenerateContentConfig(
-                    system_instruction=self.RAPHAEL_PROTOCOL,
-                    temperature=0.3,
-                    top_p=0.8,
-                    top_k=40,
-                    max_output_tokens=8192,
-                    thinking_config=types.ThinkingConfig(thinking_budget=1024),
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                )
-            )
-
-            processing_time = (datetime.now() - start_time).total_seconds()
-            logger.info(f"🧠 Gemini AI response received in {processing_time:.2f}s")
-
-            raw_text = response.text
-            logger.info("🧠 Raw Gemini AI Response:\n" + "="*50 + f"\n{raw_text}\n" + "="*50)
-            parsed_response = self._parse_structured_response(raw_text)
-
-            return {
-                'raw_response': raw_text,
-                'parsed_response': parsed_response,
-                'processing_time': processing_time,
-                'model_used': self.config.gemini_model,
-                'timestamp': datetime.now().isoformat()
+        Returns:
+            {
+                'raw_response': str,
+                'parsed_response': {
+                    'kakunin': str, 'kai': str, 'koku': str,
+                    'decision': 'EXECUTE'|'SKIP'|'UNKNOWN',
+                    'parameters': dict,
+                },
+                'processing_time': float,
+                'model_used': str,
+                'timestamp': str,
             }
+        """
+        start = datetime.now()
 
-        except Exception as e:
-            logger.error(f"❌ Error in Gemini AI analysis: {e}", exc_info=True)
-            raise
+        prompt = self._build_prompt(
+            symbol, smc_data, balance_data, positions, open_orders, smc_prompt_section,
+            live_active=live_active, max_pos=max_pos
+        )
 
-    def _construct_analysis_prompt(
+        logger.info(f"🧠 Sending SMC analysis to Gemini | symbol={symbol}")
+
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
+            model=self.config.gemini_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=self.RAPHAEL_PROTOCOL_V2,
+                temperature=0.2,       # low temp for precise, consistent output
+                top_p=0.85,
+                top_k=40,
+                max_output_tokens=4096,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
+            ),
+        )
+
+        elapsed = (datetime.now() - start).total_seconds()
+
+        # Extract text — works for both standard and thinking-mode models
+        raw_text = self._extract_text(response)
+        logger.info(
+            f"🧠 Gemini response received in {elapsed:.2f}s\n"
+            + "=" * 60 + f"\n{raw_text}\n" + "=" * 60
+        )
+
+        parsed = self._parse_response(raw_text)
+
+        return {
+            "raw_response":    raw_text,
+            "parsed_response": parsed,
+            "processing_time": elapsed,
+            "model_used":      self.config.gemini_model,
+            "timestamp":       datetime.now().isoformat(),
+        }
+
+    # ── Prompt Builder ─────────────────────────────────────────────────────
+
+    def _build_prompt(
         self,
-        signal_data: Dict[str, Any],
-        mt5_data: Dict[str, Any]
+        symbol: str,
+        smc_data: Dict[str, Any],
+        balance: Dict[str, Any],
+        positions: list,
+        open_orders: list,
+        smc_section: str,
+        live_active: int = 0,
+        max_pos: int = 1,
     ) -> str:
-        """
-        Build the full analysis prompt.
-        Timeframe order: H4 (macro) → H2 (intermediate) → H1 (setup) → M15 (entry)
-        """
-        signal_text = signal_data.get('text_content', 'No text provided')
-        has_image   = signal_data.get('image_path') is not None
-        mode        = signal_data.get('mode', 'signal')
-        direction_hint = signal_data.get('direction_hint')  # 'BUY' | 'SELL' | None
+        """Construct the full analysis prompt injected into Gemini."""
 
-        account_info   = mt5_data.get('account_info', {})
-        indicators     = mt5_data.get('indicators', {})
-        current_prices = mt5_data.get('current_prices', {})
-        positions      = mt5_data.get('current_positions', [])
-        summary        = indicators.get('summary', {})
-
-        # ── Account block ────────────────────────────────────────────────
-        if mode == 'analyse':
-            mode_header = "ANALISIS MANDIRI (INDEPENDENT MARKET ANALYSIS)"
-            signal_block = f"Symbol    : {mt5_data.get('symbol', 'N/A')}"
-            if direction_hint:
-                signal_block += f"\nDirection Hint dari Nyunk-sama: {direction_hint}"
-                signal_block += "\n(Hint ini adalah bias awal dari Nyunk-sama — evaluasi objektif tetap wajib. Counter jika data tidak mendukung.)"
-            else:
-                signal_block += "\n(Tidak ada direction hint — analisis murni objektif)"
-        else:
-            mode_header = "EVALUASI SIGNAL TRADING"
-            signal_block = f"Text Signal : {signal_text}\nImage Input : {'✅ Ada (lihat lampiran gambar)' if has_image else '❌ Tidak ada'}"
+        equity     = balance.get("equity_usdt", 0.0)
+        available  = balance.get("available_usdt", 0.0)
+        upnl       = balance.get("unrealized_pnl", 0.0)
+        max_risk   = self.config.get_max_risk_usdt(equity)
+        active_pos = len(positions)
+        pending    = len(open_orders)
+        slots_left = max(0, max_pos - live_active)
 
         prompt = f"""
-{mode_header} - RAPHAEL PROTOCOL
-Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S WIB')}
+RAPHAEL PROTOCOL V2 — AUTONOMOUS SMC SCAN
+Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Symbol: {symbol}
 
 ═══════════════════════════════════════
-DATA SIGNAL INPUT
+WALLET STATUS (BITGET USDT-M FUTURES)
 ═══════════════════════════════════════
-{signal_block}
+Total Equity    : ${equity:.4f} USDT
+Available       : ${available:.4f} USDT
+Unrealized PnL  : ${upnl:.4f} USDT
+Max Risk/Trade  : ${max_risk:.4f} USDT ({self.config.risk_percent_per_trade:.0f}% equity)
 
-═══════════════════════════════════════
-DATA AKUN MT5 (LIVE)
-═══════════════════════════════════════
-Balance       : Rp {account_info.get('balance', 0):>12,.2f}
-Equity        : Rp {account_info.get('equity', 0):>12,.2f}
-Margin        : Rp {account_info.get('margin', 0):>12,.2f}
-Free Margin   : Rp {account_info.get('margin_free', 0):>12,.2f}
-Margin Level  : {account_info.get('margin_level', 0):.2f}%
-Floating P/L  : Rp {account_info.get('profit', 0):>12,.2f}
-Open Positions: {len(positions)} posisi aktif
+POSITION STATUS (LIVE FROM EXCHANGE)
+Active Positions: {active_pos}
+Pending Orders  : {pending}
+Total Occupied  : {live_active} / {max_pos} slots (dynamic limit for ${equity:.2f} equity)
+Slots Available : {slots_left}
+{"⚠️ POSITION LIMIT REACHED — Rule 5: SKIP semua setup" if slots_left == 0 else f"✅ {slots_left} slot tersedia untuk entry baru"}
 """
 
-        # ── Open positions ────────────────────────────────────────────────
+        # ── Active positions detail ────────────────────────────────────────
         if positions:
-            prompt += "\nPOSISI RUNNING:\n"
+            prompt += "\nACTIVE POSITIONS:\n"
             for p in positions:
-                direction = "BUY" if p.get('type') == 0 else "SELL"
                 prompt += (
-                    f"  • {p.get('symbol')} {direction} "
-                    f"@ {p.get('price_open')} | "
-                    f"SL {p.get('sl')} | TP {p.get('tp')} | "
-                    f"P/L Rp {p.get('profit', 0):,.0f}\n"
+                    f"  • {p.get('symbol')} {p.get('side')} "
+                    f"| Size: {p.get('size')} "
+                    f"| Entry: {p.get('entry_price')} "
+                    f"| uPnL: ${p.get('unrealized_pnl', 0):.4f}\n"
                 )
 
-        # ── Current price ─────────────────────────────────────────────────
-        if current_prices:
-            prompt += f"""
-HARGA SAAT INI ({mt5_data.get('symbol', 'N/A')}):
-  Bid    : {current_prices.get('bid', 'N/A')}
-  Ask    : {current_prices.get('ask', 'N/A')}
-  Spread : {current_prices.get('spread', 'N/A')}
+        # ── Pending orders detail ──────────────────────────────────────────
+        if open_orders:
+            prompt += "\nPENDING ORDERS:\n"
+            for o in open_orders:
+                prompt += (
+                    f"  • {o.get('symbol')} {o.get('side')} "
+                    f"| Type: {o.get('type')} "
+                    f"| Price: {o.get('price')} "
+                    f"| Amount: {o.get('amount')}\n"
+                )
+
+        # ── SMC algorithmic data ───────────────────────────────────────────
+        prompt += f"\n{smc_section}\n"
+
+        # ── Risk parameters reminder ───────────────────────────────────────
+        prompt += f"""
+═══════════════════════════════════════
+RISK PARAMETERS (NON-NEGOTIABLE)
+═══════════════════════════════════════
+Max Risk per Trade  : ${max_risk:.4f} USDT ({self.config.risk_percent_per_trade:.0f}% equity)
+Max SL Distance     : {self.config.max_sl_distance_percent:.1f}% from entry
+Minimum RRR         : 1:{self.config.min_rrr}
+Max Active Positions: {max_pos} (dynamic — equity ${equity:.2f})
+Slots Available     : {slots_left}
+Default Leverage    : {self.config.default_leverage}x (max {self.config.max_leverage}x)
 """
 
-        # ── MTF Confluence Summary ────────────────────────────────────────
-        if summary:
-            bb_squeeze = ', '.join(summary.get('bb_squeeze_timeframes', [])) or 'none'
-            macd_cx = summary.get('macd_crossovers', {})
-            macd_cx_str = ' | '.join(f"{k}:{v}" for k, v in macd_cx.items() if v != 'none') or 'none'
-            ichi_cloud = summary.get('ichimoku_cloud_by_tf', {})
-            ichi_str = ' | '.join(f"{k}:{v}" for k, v in ichi_cloud.items()) or 'N/A'
-            prz = summary.get('h4_prz_hint', {})
-            prz_str = ' | '.join(f"{k.replace('_',' ').title()}:{v}" for k, v in prz.items()) if prz else 'N/A'
-
-            prompt += f"""
+        # ── Instruction ────────────────────────────────────────────────────
+        prompt += f"""
 ═══════════════════════════════════════
-RINGKASAN CONFLUENCE MULTI-TIMEFRAME
+INSTRUKSI ANALISIS
 ═══════════════════════════════════════
-Overall Confluence     : {summary.get('overall_confluence', 'N/A')}
-HTF Bias (H4+H2)       : {summary.get('htf_bias', 'N/A').upper()}
-LTF Bias (H1+M15)      : {summary.get('ltf_bias', 'N/A').upper()}
-Trade Recommendation   : {summary.get('trade_recommendation', 'N/A')}
+Data SMC di atas telah dihitung secara algoritmik dari {symbol} candle data.
+Tugasmu:
+1. << Kakunin >>: Verifikasi semua data. Konfirmasi H1 Bias & status posisi.
+   Sebutkan secara eksplisit: berapa slot yang tersedia ({slots_left} dari {max_pos}).
+2. << Kai >>: Review dan validasi SMC structure. Identifikasi OB entry terbaik.
+   Kalkulasi position size & RRR secara presisi.
+3. << Koku >>: EXECUTE atau SKIP. Jika EXECUTE, berikan semua parameter order.
+   Jika SKIP karena slots_left == 0, cukup 1 kalimat saja — jangan panjang.
 
-H4 Market Structure    : {summary.get('h4_structure', 'N/A')}
-H2 Market Structure    : {summary.get('h2_structure', 'N/A')}
-H2 TP Obstruction      : {summary.get('h2_tp_obstruction', 'none')}
-M15 Entry Bias         : {summary.get('entry_bias_m15', 'N/A').upper()}
-ATR M15                : {summary.get('atr_m15', 'N/A')}
+{"PERHATIAN: Slots tersedia = 0. Apapun kualitas setup SMC, keputusan WAJIB SKIP." if slots_left == 0 else f"Slots tersedia: {slots_left}. Evaluasi setup SMC secara penuh."}
 
-Ichimoku Cloud by TF   : {ichi_str}
-H4 Ichimoku Bias       : {summary.get('ichi_h4_bias', 'N/A').upper()}
-H1 Ichimoku Bias       : {summary.get('ichi_h1_bias', 'N/A').upper()}
-
-MACD Crossovers        : {macd_cx_str}
-BB Squeeze TFs         : {bb_squeeze}
-
-H4 Fibonacci PRZ       : {prz_str}
+Ingat: Modal Nyunk-sama kecil (~${equity:.2f}). Satu trade buruk = wipeout.
+Presisi dan kehati-hatian lebih penting dari frekuensi trade.
 """
-
-        # ── Per-timeframe detail (H4 → H2 → H1 → M15) ───────────────────
-        prompt += "\n═══════════════════════════════════════\nDATA INDIKATOR DETAIL PER TIMEFRAME\n═══════════════════════════════════════\n"
-
-        for tf in ['H4', 'H2', 'H1', 'M15']:
-            tf_data = indicators.get(tf)
-            if not tf_data or not isinstance(tf_data, dict):
-                prompt += f"\n[{tf}] — DATA TIDAK TERSEDIA\n"
-                continue
-
-            sr = tf_data.get('sr_levels', {})
-            res_levels = ', '.join(f"{v:.5f}" for v in sr.get('resistance', [])) or 'N/A'
-            sup_levels = ', '.join(f"{v:.5f}" for v in sr.get('support', []))    or 'N/A'
-            swing_h    = ', '.join(f"{v:.5f}" for v in tf_data.get('swing_highs', [])) or 'N/A'
-            swing_l    = ', '.join(f"{v:.5f}" for v in tf_data.get('swing_lows',  [])) or 'N/A'
-
-            prompt += f"""
-┌─ {tf} | {tf_data.get('role', '')}
-│  Bias             : {tf_data.get('bias', 'N/A').upper()} ({tf_data.get('bull_score',0)}B / {tf_data.get('bear_score',0)}R)
-│
-│  [PRICE & STRUCTURE]
-│  OHLC (last bar)  : O={tf_data.get('open')} H={tf_data.get('high')} L={tf_data.get('low')} C={tf_data.get('current_price')}
-│  Market Structure : {tf_data.get('market_structure', 'N/A')}
-│  Swing Highs      : {swing_h}
-│  Swing Lows       : {swing_l}
-│  Resistance       : {res_levels}
-│  Support          : {sup_levels}
-│  ATR(14)          : {tf_data.get('atr', 'N/A')}
-│  Volume           : {tf_data.get('volume', 'N/A')}
-│
-│  [RSI]
-│  RSI(14)          : {tf_data.get('rsi', 'N/A')} → {tf_data.get('rsi_zone', 'N/A')}
-│
-│  [EMA]
-│  EMA 20           : {tf_data.get('ema_20', 'N/A')} (price {tf_data.get('price_vs_ema20', 'N/A')})
-│  EMA 50           : {tf_data.get('ema_50', 'N/A')} (price {tf_data.get('price_vs_ema50', 'N/A')})
-│  EMA 200          : {tf_data.get('ema_200', 'N/A')} (price {tf_data.get('price_vs_ema200', 'N/A')})
-│  EMA Alignment    : {tf_data.get('ema_alignment', 'N/A')}
-│
-│  [BOLLINGER BANDS (20,2)]
-│  Upper / Mid / Lower : {tf_data.get('bb_upper','N/A')} / {tf_data.get('bb_middle','N/A')} / {tf_data.get('bb_lower','N/A')}
-│  %B                  : {tf_data.get('bb_pct_b','N/A')}  | Bandwidth: {tf_data.get('bb_bandwidth','N/A')}
-│  Squeeze?            : {'⚠️ YES — volatility breakout incoming' if tf_data.get('bb_is_squeeze') else 'No'}
-│  Price Position      : {tf_data.get('bb_position','N/A')}
-│  Mean Reversion Sig  : {tf_data.get('bb_mean_reversion_signal','N/A')}
-│
-│  [ICHIMOKU (9,26,52)]
-│  Tenkan / Kijun      : {tf_data.get('ichi_tenkan','N/A')} / {tf_data.get('ichi_kijun','N/A')}
-│  Senkou A / B        : {tf_data.get('ichi_senkou_a','N/A')} / {tf_data.get('ichi_senkou_b','N/A')}
-│  Cloud Position      : {tf_data.get('ichi_cloud_position','N/A')} ({tf_data.get('ichi_cloud_color','N/A')} cloud)
-│  TK Cross            : {tf_data.get('ichi_tk_cross','N/A')}
-│  Price vs Tenkan     : {tf_data.get('ichi_price_vs_tenkan','N/A')}
-│  Price vs Kijun      : {tf_data.get('ichi_price_vs_kijun','N/A')}
-│  Chikou Confirmation : {tf_data.get('ichi_chikou_confirmation','N/A')}
-│  Ichimoku Bias       : {tf_data.get('ichi_ichimoku_bias','N/A').upper() if tf_data.get('ichi_ichimoku_bias') else 'N/A'}
-│
-│  [MACD (12,26,9)]
-│  MACD / Signal       : {tf_data.get('macd_macd_value','N/A')} / {tf_data.get('macd_signal_value','N/A')}
-│  Histogram           : {tf_data.get('macd_histogram_value','N/A')} ({tf_data.get('macd_histogram_trend','N/A')})
-│  Crossover           : {tf_data.get('macd_crossover','N/A')}
-│  Zero Line           : {tf_data.get('macd_zero_line','N/A')}
-│  Momentum            : {tf_data.get('macd_momentum','N/A').upper() if tf_data.get('macd_momentum') else 'N/A'}
-│
-│  [FIBONACCI / PRZ HINT]
-│  Swing High/Low      : {tf_data.get('fibonacci',{}).get('swing_high','N/A')} / {tf_data.get('fibonacci',{}).get('swing_low','N/A')}
-│  Bat PRZ             : {tf_data.get('fibonacci',{}).get('prz_zone_hint',{}).get('bat_prz','N/A')}
-│  Gartley PRZ         : {tf_data.get('fibonacci',{}).get('prz_zone_hint',{}).get('gartley_prz','N/A')}
-│  Crab PRZ            : {tf_data.get('fibonacci',{}).get('prz_zone_hint',{}).get('crab_prz','N/A')}
-└{'─' * 60}
-"""
-
-        # ── Instructions ─────────────────────────────────────────────────
-        if mode == 'analyse':
-            instructions = """
-═══════════════════════════════════════
-INSTRUKSI ANALISIS RAPHAEL — MODE INDEPENDENT
-═══════════════════════════════════════
-Tidak ada signal dari sumber eksternal. Raphael harus cari setup sendiri berdasarkan data di atas.
-
-1. <<Kakunin>>: Verifikasi data MT5, status akun (equity, posisi running), dan symbol.
-   Jika ada direction hint dari Nyunk-sama, catat — tapi evaluasi tetap objektif.
-
-2. <<Kai>>: Lakukan analisis Top-Down H4 → H2 → H1 → M15:
-   - H4: Macro bias, HTF structure, Ichimoku cloud, identifikasi harmonic pattern jika ada
-   - H2: Intermediate structure, TP barrier check, PRZ validation
-   - H1: Setup location, Bollinger Band squeeze, Ichimoku TK cross
-   - M15: Entry trigger, RSI divergence, MACD crossover, SL presisi
-   - Jika ada direction hint yang BERTENTANGAN dengan data → counter secara eksplisit dan jelaskan alasannya
-   - Kalkulasi risk/reward berdasarkan LIVE EQUITY di atas
-
-3. <<Koku>>: EXECUTE, SKIP, atau WAIT:
-   - EXECUTE: ada setup valid, parameter MT5 lengkap
-   - SKIP: market tidak ada setup yang memenuhi syarat saat ini
-   - WAIT: ada potensi setup tapi belum trigger — jelaskan kondisi yang harus terpenuhi
-   - Jika SKIP/WAIT: jelaskan spesifik kondisi apa yang kurang
-
-Prioritas: Keamanan modal > RRR > Entry precision
-"""
-        else:
-            instructions = """
-═══════════════════════════════════════
-INSTRUKSI ANALISIS RAPHAEL — MODE SIGNAL EVALUATION
-═══════════════════════════════════════
-1. <<Kakunin>>: Verifikasi semua data di atas — kelengkapan data, status akun, posisi running.
-2. <<Kai>>: Lakukan analisis Top-Down H4 → H2 → H1 → M15:
-   - H4: Tentukan macro bias & struktur HTF (HH/HL atau LH/LL)
-   - H2: Periksa intermediate structure & identifikasi potential TP barrier / obstruction zone
-   - H1: Konfirmasi lokasi setup & kelayakan entry area
-   - M15: Tentukan titik entry presisi, SL tight, dan micro structure trigger
-   - Hitung pip distance SL dan TP, konversi ke IDR (berdasarkan equity live)
-   - Kalkulasi RRR & tentukan jenis order (Pending vs Instant)
-3. <<Koku>>: Keputusan EXECUTE atau SKIP dengan parameter MT5 presisi.
-   - Jika EXECUTE: sertakan Order Type, Entry, SL, TP, Lot Size
-   - Jika SKIP: jelaskan alasan teknis spesifik
-
-Prioritas: Keamanan modal > RRR > Entry precision
-"""
-        prompt += instructions
         return prompt
 
-    def _parse_structured_response(self, response_text: str) -> Dict[str, Any]:
-        """Parse the structured <<Kakunin>>, <<Kai>>, <<Koku>> response with robust regex matching"""
-        parsed = {
-            'kakunin': '',
-            'kai': '',
-            'koku': '',
-            'decision': 'UNKNOWN',
-            'parameters': {}
+    # ── Response Parser ────────────────────────────────────────────────────
+
+    def _parse_response(self, raw: str) -> Dict[str, Any]:
+        """
+        Parse Kakunin / Kai / Koku sections from the raw Gemini response.
+        Returns dict with sections, decision, and extracted parameters.
+        """
+        parsed: Dict[str, Any] = {
+            "kakunin":    "",
+            "kai":        "",
+            "koku":       "",
+            "decision":   "UNKNOWN",
+            "parameters": {},
         }
 
         try:
-            lines = response_text.split('\n')
-            current_section = None
-            current_content: list = []
+            current_section: Optional[str] = None
+            buffer: list[str] = []
 
-            for line in lines:
-                # Match << Kakunin >>, <<Kai>>, ## << Koku >>, **<<Koku>>**, etc.
-                match = re.search(r'<<\s*(kakunin|kai|koku)\s*>>', line, re.IGNORECASE)
+            for line in raw.split("\n"):
+                match = re.search(
+                    r"<<\s*(kakunin|kai|koku)\s*>>", line, re.IGNORECASE
+                )
                 if match:
-                    section_name = match.group(1).lower()
-                    # Save previous section content
+                    # Save previous buffer
                     if current_section:
-                        parsed[current_section] = '\n'.join(current_content).strip()
-                    current_section = section_name
-                    current_content = []
+                        parsed[current_section] = "\n".join(buffer).strip()
+                    current_section = match.group(1).lower()
+                    buffer = []
                 elif current_section:
-                    current_content.append(line)
+                    buffer.append(line)
 
-            # Save the last section
+            # Flush last section
             if current_section:
-                parsed[current_section] = '\n'.join(current_content).strip()
+                parsed[current_section] = "\n".join(buffer).strip()
 
-            # If section parsing was empty due to unexpected formatting, fallback to regex search
-            if not parsed['koku']:
-                koku_match = re.search(r'<<\s*koku\s*>>([\s\S]*)$', response_text, re.IGNORECASE)
-                if koku_match:
-                    parsed['koku'] = koku_match.group(1).strip()
+            # Fallback: regex search for koku if section parsing missed it
+            if not parsed["koku"]:
+                m = re.search(
+                    r"<<\s*koku\s*>>([\s\S]*)$", raw, re.IGNORECASE
+                )
+                if m:
+                    parsed["koku"] = m.group(1).strip()
 
-            # Extract decision from Koku or full response
-            search_text = parsed['koku'] if parsed['koku'] else response_text
-            search_upper = search_text.upper()
-
-            if re.search(r'\bEXECUTE\b', search_upper):
-                parsed['decision'] = 'EXECUTE'
-                parsed['parameters'] = self._extract_mt5_parameters(search_text)
-            elif re.search(r'\bSKIP\b', search_upper):
-                parsed['decision'] = 'SKIP'
-            elif re.search(r'\bWAIT\b', search_upper):
-                parsed['decision'] = 'WAIT'
+            # Extract decision from koku (or full response as fallback)
+            search_text = parsed["koku"] or raw
+            if re.search(r"\bEXECUTE\b", search_text, re.IGNORECASE):
+                parsed["decision"]   = "EXECUTE"
+                parsed["parameters"] = self._extract_order_params(search_text)
+            elif re.search(r"\bSKIP\b", search_text, re.IGNORECASE):
+                parsed["decision"] = "SKIP"
             else:
-                parsed['decision'] = 'UNKNOWN'
+                parsed["decision"] = "UNKNOWN"
 
             logger.info(
-                f"🧠 Parsed decision: {parsed['decision']} | "
-                f"Kakunin={len(parsed['kakunin'])} chars, "
-                f"Kai={len(parsed['kai'])} chars, "
-                f"Koku={len(parsed['koku'])} chars | "
-                f"Parameters: {parsed['parameters']}"
+                f"🧠 Parsed | decision={parsed['decision']} | "
+                f"kakunin={len(parsed['kakunin'])}c "
+                f"kai={len(parsed['kai'])}c "
+                f"koku={len(parsed['koku'])}c | "
+                f"params={parsed['parameters']}"
             )
-            return parsed
 
         except Exception as e:
-            logger.error(f"❌ Error parsing structured response: {e}", exc_info=True)
-            return {
-                'kakunin': response_text,
-                'kai': '',
-                'koku': '',
-                'decision': 'PARSE_ERROR',
-                'parameters': {}
-            }
+            logger.error(f"❌ _parse_response: {e}", exc_info=True)
+            parsed["kakunin"] = raw
+            parsed["decision"] = "PARSE_ERROR"
 
-    def _extract_mt5_parameters(self, koku_content: str) -> Dict[str, Any]:
-        """Extract MT5 parameters from Koku section"""
-        parameters: Dict[str, Any] = {}
+        return parsed
 
-        try:
-            lines = koku_content.split('\n')
+    def _extract_order_params(self, koku_text: str) -> Dict[str, Any]:
+        """
+        Extract structured order parameters from the Koku section.
 
-            for line in lines:
-                line_stripped = line.strip()
+        Targets lines like:
+          Entry Price  : 142.500
+          Stop Loss    : 140.200
+          Take Profit  : 150.000
+          Position Size: 0.0105
+          Leverage     : 5
+          Side         : LONG
+        """
+        params: Dict[str, Any] = {}
 
-                # Order Type
-                if re.search(r'Buy\s+Limit', line_stripped, re.IGNORECASE):
-                    parameters['order_type'] = 'BUY_LIMIT'
-                elif re.search(r'Sell\s+Limit', line_stripped, re.IGNORECASE):
-                    parameters['order_type'] = 'SELL_LIMIT'
-                elif re.search(r'Buy\s+Stop', line_stripped, re.IGNORECASE):
-                    parameters['order_type'] = 'BUY_STOP'
-                elif re.search(r'Sell\s+Stop', line_stripped, re.IGNORECASE):
-                    parameters['order_type'] = 'SELL_STOP'
-                elif re.search(r'Buy\s*(Instant|Market)?\b', line_stripped, re.IGNORECASE) and 'order' in line_stripped.lower():
-                    parameters['order_type'] = 'BUY'
-                elif re.search(r'Sell\s*(Instant|Market)?\b', line_stripped, re.IGNORECASE) and 'order' in line_stripped.lower():
-                    parameters['order_type'] = 'SELL'
+        patterns = {
+            "symbol":        r"(?:Pair\s*Symbol|Symbol)\s*[:\-]\s*(\w+)",
+            "side":          r"\bSide\s*[:\-]\s*(LONG|SHORT|BUY|SELL)",
+            "entry_price":   r"Entry\s*(?:Price)?\s*[:\-]\s*([\d]+\.?[\d]*)",
+            "stop_loss":     r"Stop\s*Loss\s*[:\-]\s*([\d]+\.?[\d]*)",
+            "take_profit":   r"Take\s*Profit\s*[:\-]\s*([\d]+\.?[\d]*)",
+            "position_size": r"Position\s*(?:Size)?\s*[:\-]\s*([\d]+\.?[\d]*)",
+            "leverage":      r"Leverage\s*[:\-]\s*(\d+)",
+            "risk_usdt":     r"Risk\s*(?:USDT)?\s*[:\-]\s*\$?\s*([\d]+\.?[\d]*)",
+            "rrr":           r"RRR\s*[:\-]\s*1[:\-]([\d]+\.?[\d]*)",
+        }
 
-                # Price (Entry)
-                if re.search(r'Price\s*\(Entry\)|Entry\s*Price|\bEntry\b', line_stripped, re.IGNORECASE):
-                    numbers = re.findall(r'\d+\.?\d*', line_stripped)
-                    if numbers:
-                        parameters['entry_price'] = float(numbers[-1])
+        for key, pattern in patterns.items():
+            match = re.search(pattern, koku_text, re.IGNORECASE)
+            if match:
+                val = match.group(1).strip()
+                # Convert to appropriate type
+                if key in ("entry_price", "stop_loss", "take_profit",
+                           "position_size", "risk_usdt", "rrr"):
+                    try:
+                        params[key] = float(val)
+                    except ValueError:
+                        params[key] = val
+                elif key == "leverage":
+                    try:
+                        params[key] = int(val)
+                    except ValueError:
+                        params[key] = val
+                else:
+                    params[key] = val
 
-                # Stop Loss
-                if re.search(r'Stop\s*Loss|\bSL\b', line_stripped, re.IGNORECASE) and 'order' not in line_stripped.lower():
-                    numbers = re.findall(r'\d+\.?\d*', line_stripped)
-                    if numbers:
-                        parameters['stop_loss'] = float(numbers[-1])
+        # Normalise side to 'buy'/'sell' for ccxt
+        if "side" in params:
+            side = str(params["side"]).upper()
+            params["side_ccxt"] = "buy" if side in ("LONG", "BUY") else "sell"
 
-                # Take Profit
-                if re.search(r'Take\s*Profit|\bTP\b', line_stripped, re.IGNORECASE):
-                    numbers = re.findall(r'\d+\.?\d*', line_stripped)
-                    if numbers:
-                        parameters['take_profit'] = float(numbers[-1])
+        logger.debug(f"🧠 Extracted order params: {params}")
+        return params
 
-                # Lot Size
-                if re.search(r'Lot\s*Size|\bLot\b', line_stripped, re.IGNORECASE):
-                    numbers = re.findall(r'\d+\.?\d*', line_stripped)
-                    if numbers:
-                        parameters['lot_size'] = float(numbers[-1])
-
-            logger.debug(f"🧠 Extracted MT5 parameters: {parameters}")
-            return parameters
-
-        except Exception as e:
-            logger.error(f"❌ Error extracting MT5 parameters: {e}")
-            return {}
+    # ── Connection Test ────────────────────────────────────────────────────
 
     async def test_connection(self) -> bool:
-        """Test Gemini API connection"""
+        """Ping Gemini — works for both standard and thinking-mode models."""
         try:
-            logger.info("🧠 Testing Gemini API connection...")
-
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.config.gemini_model,
-                contents="Test connection. Respond with 'OK' only.",
+                contents="Say: OK",
                 config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    max_output_tokens=10,
-                )
+                    temperature=0.0, max_output_tokens=500
+                ),
             )
-
-            if response and response.text and 'OK' in response.text.upper():
-                logger.info("✅ Gemini API connection test successful")
-                return True
-            else:
-                logger.warning(f"⚠️  Gemini API returned unexpected response: {response.text!r}")
-                return False
-
+            # Standard models: response.text
+            # Thinking models (3.x-flash): text lives in candidates[].content.parts
+            raw = self._extract_text(response)
+            ok = bool(raw)
+            logger.info(f"{'✅' if ok else '❌'} Gemini connection test | response: {raw!r}")
+            return ok
         except Exception as e:
-            logger.error(f"❌ Gemini API connection test failed: {e}")
+            logger.error(f"❌ Gemini connection test failed: {e}")
             return False
+
+    def _extract_text(self, response) -> str:
+        """Extract text from a Gemini response — handles both standard and thinking models."""
+        if response.text:
+            return response.text
+        if response.candidates:
+            parts = []
+            for cand in response.candidates:
+                for part in (cand.content.parts or []):
+                    if hasattr(part, "text") and part.text:
+                        parts.append(part.text)
+            return "".join(parts)
+        return ""

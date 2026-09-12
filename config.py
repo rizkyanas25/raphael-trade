@@ -1,18 +1,19 @@
 """
-Configuration Management for Raphael AI Bot
-Wisdom Lord Raphael - Core Analytical Engine & Financial Risk Guard
+Configuration Management — Raphael AI Bot v2.0 (SMC Crypto Engine)
+Wisdom Lord Raphael — Core SMC Analytical Engine & Crypto Risk Guard
 
-All risk parameters are dynamic and equity-based — nothing hardcoded in IDR.
+All risk parameters are dynamic and equity-based.
+Exchange: Bitget USDT-M Futures via ccxt
 """
 
 import os
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 from dotenv import load_dotenv
 
 
 class Config:
-    """Configuration management for Raphael AI Bot"""
+    """Configuration management for Raphael AI Bot v2.0"""
 
     def __init__(self, env_file: Optional[str] = None):
         env_path = env_file or Path(__file__).parent / ".env"
@@ -24,81 +25,47 @@ class Config:
 
         # ── Gemini AI ─────────────────────────────────────────────────────
         self.gemini_api_key = self._get_required("GEMINI_API_KEY")
-        self.gemini_model   = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+        self.gemini_model   = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
-        # ── MT5 ───────────────────────────────────────────────────────────
-        _mt5_login    = os.getenv("MT5_LOGIN", "0")
-        self.mt5_login    = int(_mt5_login) if _mt5_login.isdigit() else 0
-        self.mt5_password = os.getenv("MT5_PASSWORD", "")
-        self.mt5_server   = os.getenv("MT5_SERVER", "")
-        self.use_mock_mt5 = os.getenv("USE_MOCK_MT5", "false").lower() == "true"
+        # ── Bitget Exchange ───────────────────────────────────────────────
+        self.bitget_api_key    = self._get_required("BITGET_API_KEY")
+        self.bitget_api_secret = self._get_required("BITGET_API_SECRET")
+        self.bitget_passphrase = self._get_required("BITGET_PASSPHRASE")
+        # Set to 'true' to use Bitget sandbox/testnet
+        self.bitget_sandbox: bool = (
+            os.getenv("BITGET_SANDBOX", "false").lower() == "true"
+        )
 
         # ── Risk Management (equity-based, dynamic) ───────────────────────
-        # % of live equity to risk per trade (default 5%)
+        # % of live USDT equity to risk per trade (default 3%)
         self.risk_percent_per_trade: float = float(
-            os.getenv("RISK_PERCENT_PER_TRADE", "5.0")
+            os.getenv("RISK_PERCENT_PER_TRADE", "3.0")
         )
-        # Hard SKIP multiplier: risk > percent × multiplier → forced SKIP
-        # e.g. 5% × 2.0 = hard SKIP above 10% equity risk
-        self.risk_hard_skip_multiplier: float = float(
-            os.getenv("RISK_HARD_SKIP_MULTIPLIER", "2.0")
+        # Hard SKIP if SL distance from entry > this % (default 1.5%)
+        self.max_sl_distance_percent: float = float(
+            os.getenv("MAX_SL_DISTANCE_PERCENT", "1.5")
         )
-        # USD/IDR conversion rate for pip value calculation
-        self.usd_idr_rate: float = float(os.getenv("USD_IDR_RATE", "16000"))
+        # Minimum Risk:Reward Ratio
+        self.min_rrr: float = float(os.getenv("MIN_RRR", "3.0"))
 
-        # Minimum RRR across all setups
-        self.min_rrr: float = float(os.getenv("MIN_RRR", "2.0"))
+        # ── Leverage ──────────────────────────────────────────────────────
+        # Default leverage for new positions (can be overridden per signal)
+        self.default_leverage: int = int(os.getenv("DEFAULT_LEVERAGE", "10"))
+        self.max_leverage: int     = int(os.getenv("MAX_LEVERAGE", "20"))
 
-        # Default / minimum lot size
-        self.default_lot_size: float = float(os.getenv("DEFAULT_LOT_SIZE", "0.01"))
-
-        # Standard pip value per 1 full lot in USD (applies to most forex pairs)
-        self.pip_value_per_lot_usd: float = float(
-            os.getenv("PIP_VALUE_PER_LOT_USD", "10.0")
-        )
-
-        # ── High-Volatility Instruments ───────────────────────────────────
-        self.high_vol_min_equity_idr: float = float(
-            os.getenv("HIGH_VOL_MIN_EQUITY_IDR", "1000000")
-        )
-        _hv_raw = os.getenv(
-            "HIGH_VOL_SYMBOLS",
-            "XAUUSD,XAGUSD,JPN225,US30,NAS100,UK100,GER40"
-        )
-        self.high_vol_symbols: List[str] = [
-            s.strip().upper() for s in _hv_raw.split(",") if s.strip()
-        ]
+        # ── Watchlist & Scan Interval — REMOVED ──────────────────────────
+        # Bot is now on-demand only. No autonomous scanner.
+        # All scans initiated via /scan <SYMBOL> from Telegram.
 
         # ── Position Limits ───────────────────────────────────────────────
-        self.max_positions:             int   = int(os.getenv("MAX_POSITIONS", "3"))
-        self.max_margin_usage_percent:  float = float(os.getenv("MAX_MARGIN_USAGE_PERCENT", "50.0"))
-        self.min_margin_level_percent:  float = float(os.getenv("MIN_MARGIN_LEVEL_PERCENT", "500.0"))
+        # Hard cap — dynamic method get_max_positions(equity) should be used
+        # instead of this value wherever possible. This is the absolute ceiling.
+        self.max_positions_hard_cap: int = int(os.getenv("MAX_POSITIONS_HARD_CAP", "3"))
 
-        # ── Paper Trading ─────────────────────────────────────────────────
-        self.paper_trading_enabled: bool = (
-            os.getenv("PAPER_TRADING_ENABLED", "true").lower() == "true"
-        )
-        self.paper_trading_win_rate_threshold: float = float(
-            os.getenv("PAPER_TRADING_WIN_RATE_THRESHOLD", "55.0")
-        )
-        self.paper_trading_rrr_threshold: float = float(
-            os.getenv("PAPER_TRADING_RRR_THRESHOLD", "2.0")
-        )
-        # How often (seconds) the background monitor checks TP/SL
-        self.paper_trading_monitor_interval: int = int(
-            os.getenv("PAPER_TRADING_MONITOR_INTERVAL", "60")
-        )
-        # Auto-expire pending orders that never trigger
-        self.paper_trading_intraday_expire_days: int = int(
-            os.getenv("PAPER_TRADING_INTRADAY_EXPIRE_DAYS", "2")
-        )
-        self.paper_trading_swing_expire_days: int = int(
-            os.getenv("PAPER_TRADING_SWING_EXPIRE_DAYS", "5")
-        )
-        # Starting virtual equity for paper trading (IDR)
-        self.paper_trading_starting_equity_idr: float = float(
-            os.getenv("PAPER_TRADING_STARTING_EQUITY_IDR", "570000")
-        )
+        # ── Operation Mode ────────────────────────────────────────────────
+        # 'manual'  → bot sends signal notification, waits for /execute
+        # 'auto'    → bot places Limit Order automatically after EXECUTE decision
+        self.operation_mode: str = os.getenv("OPERATION_MODE", "manual").lower()
 
         # ── Database ──────────────────────────────────────────────────────
         self.database_path = os.getenv("DATABASE_PATH", "raphael_trades.db")
@@ -106,10 +73,6 @@ class Config:
         # ── Logging ───────────────────────────────────────────────────────
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
         self.log_file  = os.getenv("LOG_FILE", "raphael.log")
-
-        # ── Retry ─────────────────────────────────────────────────────────
-        self.max_retry_attempts:  int = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
-        self.retry_delay_seconds: int = int(os.getenv("RETRY_DELAY_SECONDS", "5"))
 
         # ── System ────────────────────────────────────────────────────────
         self.system_timezone = os.getenv("SYSTEM_TIMEZONE", "Asia/Jakarta")
@@ -119,73 +82,89 @@ class Config:
     def _get_required(self, key: str) -> str:
         value = os.getenv(key)
         if not value:
-            raise ValueError(f"Required environment variable '{key}' is not set")
+            raise ValueError(
+                f"Required environment variable '{key}' is not set. "
+                f"Check your .env file."
+            )
         return value
 
-    def get_max_risk_idr(self, equity_idr: float) -> float:
+    def get_max_risk_usdt(self, equity_usdt: float) -> float:
         """
-        Calculate maximum risk in IDR based on live equity.
-        This replaces the old hardcoded MAX_RISK_IDR.
-
-        Returns: equity_idr × (risk_percent / 100)
+        Max allowable risk per trade in USDT.
+        = equity × (risk_percent / 100)
+        e.g. $5 × 3% = $0.15
         """
-        return equity_idr * (self.risk_percent_per_trade / 100.0)
+        return equity_usdt * (self.risk_percent_per_trade / 100.0)
 
-    def get_hard_skip_risk_idr(self, equity_idr: float) -> float:
+    def is_sl_distance_valid(self, entry: float, stop_loss: float) -> bool:
         """
-        Threshold above which Raphael issues a hard SKIP regardless of setup.
-        = max_risk × hard_skip_multiplier
+        Returns True if SL distance is within the max allowed %.
+        AUTO-SKIP if abs(entry - sl) / entry * 100 > max_sl_distance_percent
         """
-        return self.get_max_risk_idr(equity_idr) * self.risk_hard_skip_multiplier
+        if entry == 0:
+            return False
+        distance_pct = abs(entry - stop_loss) / entry * 100
+        return distance_pct <= self.max_sl_distance_percent
 
-    def get_pip_value_per_001_lot_idr(self, symbol: str) -> float:
+    def calculate_position_size(
+        self,
+        equity_usdt: float,
+        entry_price: float,
+        stop_loss_price: float,
+        leverage: int = 0,
+    ) -> float:
         """
-        Calculate pip value in IDR for 0.01 lot using proper USD-based formula.
-
-        Formula:
-            pip_value_per_lot_USD × (lot_size / 1.0) × usd_idr_rate
-            = 10 × 0.01 × 16000 = 1600 IDR/pip for standard pair at 0.01 lot
-
-        XAUUSD uses different multiplier (pip = 0.1, not 0.0001).
+        Position size (in base asset units) using SMC Rule 2:
+            max_risk_usdt / abs(entry - sl)
+        Leverage is factored in: position_size = risk / (sl_distance / leverage)
+        Returns 0.0 if inputs are invalid.
         """
-        symbol_upper = symbol.upper()
+        if entry_price == 0 or stop_loss_price == 0:
+            return 0.0
+        sl_distance = abs(entry_price - stop_loss_price)
+        if sl_distance == 0:
+            return 0.0
+        lev = leverage if leverage > 0 else self.default_leverage
+        max_risk = self.get_max_risk_usdt(equity_usdt)
+        # With leverage, each unit of position only ties up (price / lev) of margin
+        # but the P/L per unit is still (price_move per unit)
+        position_size = (max_risk * lev) / (sl_distance * lev / lev)
+        # Simplifies to: max_risk / sl_distance (leverage doesn't change dollar risk)
+        position_size = max_risk / sl_distance
+        return round(position_size, 4)
 
-        # Gold: pip = $0.1 move, 1 lot = $100/pip → 0.01 lot = $1/pip
-        if "XAU" in symbol_upper:
-            return 1.0 * self.usd_idr_rate  # $1/pip × kurs
+    def is_auto_mode(self) -> bool:
+        return self.operation_mode == "auto"
 
-        # JPY pairs: pip = 0.01 move, same $10/pip/lot standard
-        # (pip multiplier handled in pip distance calculation, not here)
-        # Standard: 0.01 lot × $10/pip = $0.10/pip
-        return (self.default_lot_size / 1.0) * self.pip_value_per_lot_usd * self.usd_idr_rate
+    def is_manual_mode(self) -> bool:
+        return self.operation_mode == "manual"
 
-    def get_pip_multiplier(self, symbol: str) -> float:
+    def get_max_positions(self, equity_usdt: float) -> int:
         """
-        Price movement multiplier to convert price diff → pips.
+        Dynamic max simultaneous positions based on live equity.
 
-        - Standard 5-digit forex (EURUSD etc): × 10,000
-        - JPY pairs (3-digit): × 100
-        - XAUUSD (2-digit): × 10
-        - Indices: × 1
+        Logic:
+          - Minimum notional on Bitget Futures = $5 per order
+          - With max_leverage 20x, minimum margin per trade = $5/20 = $0.25
+          - But we also need enough margin buffer to avoid margin call
+          - Conservative approach: each position should not consume
+            more than (equity × risk_percent) × 2 in margin (2x risk as buffer)
+
+        Thresholds (calibrated for $5–$100 equity range):
+          equity < $15   → 1 position  (barely enough for 1 viable order)
+          equity < $40   → 2 positions (enough margin for 2 small positions)
+          equity < $100  → 3 positions
+          equity >= $100 → hard cap (max_positions_hard_cap)
+
+        Never exceeds max_positions_hard_cap regardless of equity.
         """
-        symbol_upper = symbol.upper()
-        if "JPY" in symbol_upper:
-            return 100.0
-        if "XAU" in symbol_upper or "XAG" in symbol_upper:
-            return 10.0
-        if any(idx in symbol_upper for idx in ["JPN225", "US30", "NAS100", "UK100", "GER40"]):
-            return 1.0
-        return 10000.0  # standard 5-digit forex
+        if equity_usdt < 15.0:
+            dynamic = 1
+        elif equity_usdt < 40.0:
+            dynamic = 2
+        elif equity_usdt < 100.0:
+            dynamic = 3
+        else:
+            dynamic = self.max_positions_hard_cap
 
-    def is_high_volatility(self, symbol: str) -> bool:
-        """Check if symbol requires elevated equity to trade."""
-        s = symbol.upper()
-        return any(hv in s for hv in self.high_vol_symbols)
-
-    def get_swing_timeframes(self) -> list:
-        """Timeframes considered 'swing' for RRR and expire rules."""
-        return ['H2', 'H4']
-
-    def get_intraday_timeframes(self) -> list:
-        """Timeframes considered 'intraday' for RRR and expire rules."""
-        return ['M15', 'H1']
+        return min(dynamic, self.max_positions_hard_cap)

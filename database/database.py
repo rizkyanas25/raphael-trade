@@ -1,14 +1,21 @@
 """
-Database Module for Raphael AI Bot
-Wisdom Lord Raphael - Core Analytical Engine & Financial Risk Guard
+Database Module — Raphael AI Bot v2.0 (SMC Crypto Engine)
+Wisdom Lord Raphael — Core SMC Analytical Engine & Crypto Risk Guard
+
+SQLite schema v2.0:
+  - trades      : all orders (pending, filled, closed, cancelled)
+  - smc_zones   : detected Order Blocks and Liquidity Pools
+  - scan_history: per-symbol scan results and Gemini decisions
+  - system_state: key-value store for bot recovery / mode persistence
 """
 
-import aiosqlite
-import logging
-from pathlib import Path
-from typing import Optional, List, Dict, Any
-from datetime import datetime
 import json
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import aiosqlite
 
 from config import Config
 
@@ -17,363 +24,416 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
-    """SQLite database for trade history and performance tracking"""
-    
+    """Async SQLite database for Raphael v2.0"""
+
     def __init__(self, config: Config):
-        """Initialize database with configuration"""
         self.config = config
         self.db_path = Path(config.database_path)
         self.connection: Optional[aiosqlite.Connection] = None
-        
+
+    # ── Lifecycle ──────────────────────────────────────────────────────────
+
     async def connect(self):
-        """Establish database connection"""
         if self.connection is not None:
-            return  # Already connected, skip
+            return
         self.connection = await aiosqlite.connect(self.db_path)
         self.connection.row_factory = aiosqlite.Row
         logger.info(f"✅ Database connected: {self.db_path}")
-        
+
     async def close(self):
-        """Close database connection"""
         if self.connection:
             await self.connection.close()
+            self.connection = None
             logger.info("🔌 Database connection closed")
-    
+
     async def initialize_schema(self):
-        """Initialize database schema"""
+        """Create all tables and indexes if they don't already exist."""
         await self.connect()
         try:
-            # Create trades table
+            # ── trades ────────────────────────────────────────────────────
             await self.connection.execute("""
                 CREATE TABLE IF NOT EXISTS trades (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    signal_id TEXT UNIQUE,
-                    symbol TEXT NOT NULL,
-                    order_type TEXT NOT NULL,
-                    entry_price REAL NOT NULL,
-                    stop_loss REAL NOT NULL,
-                    take_profit REAL NOT NULL,
-                    lot_size REAL NOT NULL,
-                    risk_idr REAL NOT NULL,
-                    potential_reward_idr REAL NOT NULL,
-                    rrr REAL NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    strategy TEXT,
-                    equity_at_entry REAL NOT NULL,
-                    balance_at_entry REAL NOT NULL,
-                    status TEXT DEFAULT 'pending',
-                    entry_time TEXT,
-                    exit_time TEXT,
-                    exit_price REAL,
-                    profit_loss REAL,
-                    profit_loss_idr REAL,
-                    pip_movement REAL,
-                    paper_trade BOOLEAN DEFAULT FALSE,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    trade_id        TEXT PRIMARY KEY,
+                    symbol          TEXT NOT NULL,
+                    side            TEXT NOT NULL,          -- 'LONG' | 'SHORT'
+                    order_type      TEXT NOT NULL DEFAULT 'LIMIT',
+                    entry_price     REAL NOT NULL,
+                    stop_loss       REAL NOT NULL,
+                    take_profit     REAL NOT NULL,
+                    position_size   REAL NOT NULL,
+                    leverage        INTEGER NOT NULL DEFAULT 5,
+                    risk_usdt       REAL NOT NULL DEFAULT 0.0,
+                    rrr             REAL NOT NULL DEFAULT 0.0,
+                    status          TEXT NOT NULL DEFAULT 'PENDING',
+                    -- 'PENDING' | 'FILLED' | 'CLOSED_TP' | 'CLOSED_SL' | 'CANCELLED'
+                    exchange_order_id TEXT,
+                    pnl_usdt        REAL DEFAULT 0.0,
+                    fill_price      REAL,
+                    close_price     REAL,
+                    filled_at       TEXT,
+                    closed_at       TEXT,
+                    created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
-            # Create performance_metrics table
+
+            # ── smc_zones ─────────────────────────────────────────────────
             await self.connection.execute("""
-                CREATE TABLE IF NOT EXISTS performance_metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    period TEXT NOT NULL,
-                    total_trades INTEGER DEFAULT 0,
-                    winning_trades INTEGER DEFAULT 0,
-                    losing_trades INTEGER DEFAULT 0,
-                    win_rate REAL DEFAULT 0,
-                    total_profit_loss REAL DEFAULT 0,
-                    total_profit_loss_idr REAL DEFAULT 0,
-                    avg_rrr REAL DEFAULT 0,
-                    max_drawdown REAL DEFAULT 0,
-                    max_drawdown_percent REAL DEFAULT 0,
-                    sharpe_ratio REAL DEFAULT 0,
-                    paper_trades BOOLEAN DEFAULT FALSE,
-                    calculated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                CREATE TABLE IF NOT EXISTS smc_zones (
+                    zone_id         TEXT PRIMARY KEY,
+                    symbol          TEXT NOT NULL,
+                    timeframe       TEXT NOT NULL,         -- 'M15' | 'M5'
+                    zone_type       TEXT NOT NULL,
+                    -- 'DEMAND_OB' | 'SUPPLY_OB' | 'LIQUIDITY_EQH' | 'LIQUIDITY_EQL'
+                    high_price      REAL NOT NULL,
+                    low_price       REAL NOT NULL,
+                    strength        TEXT DEFAULT 'NORMAL', -- 'STRONG' | 'NORMAL'
+                    is_mitigated    INTEGER DEFAULT 0,
+                    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
-            # Create system_state table for recovery
+
+            # ── scan_history ──────────────────────────────────────────────
+            await self.connection.execute("""
+                CREATE TABLE IF NOT EXISTS scan_history (
+                    scan_id         TEXT PRIMARY KEY,
+                    symbol          TEXT NOT NULL,
+                    h1_bias         TEXT,
+                    h1_bos          TEXT,
+                    m5_choch        TEXT,
+                    has_valid_setup INTEGER DEFAULT 0,
+                    setup_bias      TEXT,
+                    skip_reason     TEXT,
+                    gemini_decision TEXT,               -- 'EXECUTE' | 'SKIP' | 'UNKNOWN'
+                    gemini_kakunin  TEXT,
+                    gemini_kai      TEXT,
+                    gemini_koku     TEXT,
+                    order_params    TEXT,               -- JSON
+                    processing_time REAL DEFAULT 0.0,
+                    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # ── system_state ──────────────────────────────────────────────
             await self.connection.execute("""
                 CREATE TABLE IF NOT EXISTS system_state (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    key         TEXT PRIMARY KEY,
+                    value       TEXT NOT NULL,
+                    updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
-            # Create signal_analysis table for AI evaluation history
-            await self.connection.execute("""
-                CREATE TABLE IF NOT EXISTS signal_analysis (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    signal_id TEXT NOT NULL,
-                    image_path TEXT,
-                    text_content TEXT,
-                    mt5_data_json TEXT,
-                    ai_response_json TEXT,
-                    kakunin_data TEXT,
-                    kai_data TEXT,
-                    koku_decision TEXT,
-                    koku_parameters TEXT,
-                    processing_time REAL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create indexes for performance
-            await self.connection.execute("""
-                CREATE INDEX IF NOT EXISTS idx_trades_symbol 
-                ON trades(symbol)
-            """)
-            
-            await self.connection.execute("""
-                CREATE INDEX IF NOT EXISTS idx_trades_status 
-                ON trades(status)
-            """)
-            
-            await self.connection.execute("""
-                CREATE INDEX IF NOT EXISTS idx_trades_created_at 
-                ON trades(created_at)
-            """)
-            
-            await self.connection.execute("""
-                CREATE INDEX IF NOT EXISTS idx_signal_analysis_signal_id 
-                ON signal_analysis(signal_id)
-            """)
-            
+
+            # ── indexes ───────────────────────────────────────────────────
+            for ddl in [
+                "CREATE INDEX IF NOT EXISTS idx_trades_symbol   ON trades(symbol)",
+                "CREATE INDEX IF NOT EXISTS idx_trades_status   ON trades(status)",
+                "CREATE INDEX IF NOT EXISTS idx_trades_created  ON trades(created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_zones_symbol    ON smc_zones(symbol)",
+                "CREATE INDEX IF NOT EXISTS idx_scan_symbol     ON scan_history(symbol)",
+                "CREATE INDEX IF NOT EXISTS idx_scan_created    ON scan_history(created_at)",
+            ]:
+                await self.connection.execute(ddl)
+
             await self.connection.commit()
-            logger.info("✅ Database schema initialized successfully")
+            logger.info("✅ Database schema v2.0 initialized")
+
         except Exception as e:
-            logger.error(f"❌ Error initializing database schema: {e}", exc_info=True)
+            logger.error(f"❌ initialize_schema: {e}", exc_info=True)
             raise
-    
-    async def save_trade(self, trade_data: Dict[str, Any]) -> int:
-        """Save trade data to database"""
+
+    # ── Trades ─────────────────────────────────────────────────────────────
+
+    async def save_trade(self, trade: Dict[str, Any]) -> str:
+        """
+        Insert a new trade record.
+        Returns trade_id.
+        """
         await self.connect()
+        trade_id = trade.get(
+            "trade_id",
+            f"trade_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        )
         try:
-            async with self.connection.execute(
+            await self.connection.execute(
                 """
                 INSERT INTO trades (
-                    signal_id, symbol, order_type, entry_price, stop_loss, 
-                    take_profit, lot_size, risk_idr, potential_reward_idr, rrr,
-                    timeframe, strategy, equity_at_entry, balance_at_entry,
-                    paper_trade
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    trade_id, symbol, side, order_type,
+                    entry_price, stop_loss, take_profit,
+                    position_size, leverage, risk_usdt, rrr,
+                    status, exchange_order_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    trade_data['signal_id'],
-                    trade_data['symbol'],
-                    trade_data['order_type'],
-                    trade_data['entry_price'],
-                    trade_data['stop_loss'],
-                    trade_data['take_profit'],
-                    trade_data['lot_size'],
-                    trade_data['risk_idr'],
-                    trade_data['potential_reward_idr'],
-                    trade_data['rrr'],
-                    trade_data['timeframe'],
-                    trade_data.get('strategy', ''),
-                    trade_data['equity_at_entry'],
-                    trade_data['balance_at_entry'],
-                    trade_data.get('paper_trade', False)
-                )
-            ) as cursor:
-                await self.connection.commit()
-                trade_id = cursor.lastrowid
-                logger.info(f"💾 Trade saved with ID: {trade_id}")
-                return trade_id
+                    trade_id,
+                    trade["symbol"],
+                    trade["side"],
+                    trade.get("order_type", "LIMIT"),
+                    trade["entry_price"],
+                    trade["stop_loss"],
+                    trade["take_profit"],
+                    trade["position_size"],
+                    trade.get("leverage", 5),
+                    trade.get("risk_usdt", 0.0),
+                    trade.get("rrr", 0.0),
+                    trade.get("status", "PENDING"),
+                    trade.get("exchange_order_id"),
+                ),
+            )
+            await self.connection.commit()
+            logger.info(f"💾 Trade saved: {trade_id} | {trade['symbol']} {trade['side']}")
+            return trade_id
         except Exception as e:
-            logger.error(f"❌ Error saving trade: {e}", exc_info=True)
+            logger.error(f"❌ save_trade: {e}", exc_info=True)
             raise
-    
+
     async def update_trade_status(
         self,
-        signal_id: str,
+        trade_id: str,
         status: str,
-        exit_price: Optional[float] = None,
-        profit_loss: Optional[float] = None
+        pnl_usdt: Optional[float] = None,
+        close_price: Optional[float] = None,
+        fill_price: Optional[float] = None,
+        exchange_order_id: Optional[str] = None,
     ):
-        """Update trade status and exit data"""
+        """Update trade status and optional financial outcome fields."""
         await self.connect()
+        now = datetime.now().isoformat()
+        fields: Dict[str, Any] = {"status": status, "updated_at": now}
+
+        if status == "FILLED":
+            fields["filled_at"] = now
+        if status in ("CLOSED_TP", "CLOSED_SL", "CANCELLED"):
+            fields["closed_at"] = now
+        if pnl_usdt is not None:
+            fields["pnl_usdt"] = pnl_usdt
+        if close_price is not None:
+            fields["close_price"] = close_price
+        if fill_price is not None:
+            fields["fill_price"] = fill_price
+        if exchange_order_id is not None:
+            fields["exchange_order_id"] = exchange_order_id
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [trade_id]
+
         try:
-            update_data: Dict[str, Any] = {
-                'status': status,
-                'updated_at': datetime.now().isoformat()
+            await self.connection.execute(
+                f"UPDATE trades SET {set_clause} WHERE trade_id = ?", values
+            )
+            await self.connection.commit()
+            logger.info(f"📊 Trade {trade_id} → {status}")
+        except Exception as e:
+            logger.error(f"❌ update_trade_status: {e}", exc_info=True)
+            raise
+
+    async def get_active_trades(self) -> List[Dict[str, Any]]:
+        """Return all PENDING and FILLED trades."""
+        await self.connect()
+        async with self.connection.execute(
+            "SELECT * FROM trades WHERE status IN ('PENDING','FILLED') ORDER BY created_at ASC"
+        ) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_trade_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return most recent closed/cancelled trades."""
+        await self.connect()
+        async with self.connection.execute(
+            """
+            SELECT * FROM trades
+            WHERE status IN ('CLOSED_TP','CLOSED_SL','CANCELLED')
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+    async def count_active_positions(self) -> int:
+        """Count PENDING + FILLED trades (used to enforce max_positions rule)."""
+        await self.connect()
+        async with self.connection.execute(
+            "SELECT COUNT(*) as cnt FROM trades WHERE status IN ('PENDING','FILLED')"
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row["cnt"]) if row else 0
+
+    async def get_performance_summary(self) -> Dict[str, Any]:
+        """Calculate win rate, total PnL, and avg RRR from closed trades."""
+        await self.connect()
+        async with self.connection.execute(
+            """
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'CLOSED_TP' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN status = 'CLOSED_SL' THEN 1 ELSE 0 END) as losses,
+                SUM(pnl_usdt) as total_pnl,
+                AVG(rrr)      as avg_rrr
+            FROM trades
+            WHERE status IN ('CLOSED_TP','CLOSED_SL')
+            """
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                total = int(row["total"] or 0)
+                wins  = int(row["wins"]  or 0)
+                return {
+                    "total_trades": total,
+                    "wins":         wins,
+                    "losses":       int(row["losses"] or 0),
+                    "win_rate":     round(wins / total * 100, 1) if total > 0 else 0.0,
+                    "total_pnl":    round(float(row["total_pnl"] or 0.0), 4),
+                    "avg_rrr":      round(float(row["avg_rrr"] or 0.0), 2),
+                }
+            return {
+                "total_trades": 0, "wins": 0, "losses": 0,
+                "win_rate": 0.0, "total_pnl": 0.0, "avg_rrr": 0.0,
             }
 
-            # Only set exit_time for terminal statuses
-            if status in ('completed', 'expired', 'cancelled'):
-                update_data['exit_time'] = datetime.now().isoformat()
+    # ── SMC Zones ──────────────────────────────────────────────────────────
 
-            if exit_price is not None:
-                update_data['exit_price'] = exit_price
-
-            if profit_loss is not None:
-                update_data['profit_loss'] = profit_loss
-                update_data['profit_loss_idr'] = profit_loss  # same value, IDR account
-
-            set_clause = ", ".join([f"{k} = ?" for k in update_data.keys()])
-            values = list(update_data.values()) + [signal_id]
-
-            await self.connection.execute(
-                f"UPDATE trades SET {set_clause} WHERE signal_id = ?",
-                values
-            )
-            await self.connection.commit()
-            logger.info(f"📊 Trade {signal_id} → status: {status}")
-        except Exception as e:
-            logger.error(f"❌ Error updating trade status: {e}", exc_info=True)
-            raise
-    
-    async def save_signal_analysis(self, analysis_data: Dict[str, Any]) -> int:
-        """Save signal analysis data"""
+    async def save_smc_zones(self, symbol: str, smc_data: Dict[str, Any]):
+        """
+        Persist detected SMC zones (OBs + Liquidity Pools) from a scan.
+        Clears stale unmitigated zones for the symbol first.
+        """
         await self.connect()
-        try:
-            async with self.connection.execute(
+        now = datetime.now().isoformat()
+
+        # Remove old unmitigated zones for this symbol (fresh scan supersedes)
+        await self.connection.execute(
+            "DELETE FROM smc_zones WHERE symbol = ? AND is_mitigated = 0", (symbol,)
+        )
+
+        zones_to_insert = []
+
+        for ob in smc_data.get("m15_obs", []):
+            zone_id = f"zone_{symbol}_{now}_m15_{ob['type']}_{ob['high']:.4f}"
+            zones_to_insert.append((
+                zone_id, symbol, "M15",
+                f"{ob['type']}_OB",
+                ob["high"], ob["low"],
+                ob.get("strength", "NORMAL"), 0,
+            ))
+
+        for ob in smc_data.get("m5_obs", []):
+            zone_id = f"zone_{symbol}_{now}_m5_{ob['type']}_{ob['high']:.4f}"
+            zones_to_insert.append((
+                zone_id, symbol, "M5",
+                f"{ob['type']}_OB",
+                ob["high"], ob["low"],
+                ob.get("strength", "NORMAL"), 0,
+            ))
+
+        for lp in smc_data.get("m15_liquidity", []):
+            zone_id = f"zone_{symbol}_{now}_liq_{lp['type']}_{lp['price']:.4f}"
+            zones_to_insert.append((
+                zone_id, symbol, "M15",
+                f"LIQUIDITY_{lp['type']}",
+                lp["price"], lp["price"],
+                "NORMAL", 0,
+            ))
+
+        if zones_to_insert:
+            await self.connection.executemany(
                 """
-                INSERT INTO signal_analysis (
-                    signal_id, image_path, text_content, mt5_data_json,
-                    ai_response_json, kakunin_data, kai_data, koku_decision,
-                    koku_parameters, processing_time
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO smc_zones
+                (zone_id, symbol, timeframe, zone_type, high_price, low_price, strength, is_mitigated)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                zones_to_insert,
+            )
+
+        await self.connection.commit()
+        logger.debug(f"💾 SMC zones saved for {symbol}: {len(zones_to_insert)} zones")
+
+    # ── Scan History ───────────────────────────────────────────────────────
+
+    async def save_scan(self, scan: Dict[str, Any]) -> str:
+        """Persist a full scan result (SMC + Gemini decision) to scan_history."""
+        await self.connect()
+        scan_id = scan.get(
+            "scan_id",
+            f"scan_{scan.get('symbol','X')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
+        parsed = scan.get("parsed_response", {})
+        try:
+            await self.connection.execute(
+                """
+                INSERT INTO scan_history (
+                    scan_id, symbol,
+                    h1_bias, h1_bos, m5_choch,
+                    has_valid_setup, setup_bias, skip_reason,
+                    gemini_decision, gemini_kakunin, gemini_kai, gemini_koku,
+                    order_params, processing_time
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    analysis_data['signal_id'],
-                    analysis_data.get('image_path', ''),
-                    analysis_data.get('text_content', ''),
-                    json.dumps(analysis_data.get('mt5_data', {}), default=str),
-                    json.dumps(analysis_data.get('ai_response', {}), default=str),
-                    analysis_data.get('kakunin_data', ''),
-                    analysis_data.get('kai_data', ''),
-                    analysis_data.get('koku_decision', ''),
-                    json.dumps(analysis_data.get('koku_parameters', {}), default=str),
-                    analysis_data.get('processing_time', 0.0)
-                )
-            ) as cursor:
-                await self.connection.commit()
-                analysis_id = cursor.lastrowid
-                logger.info(f"🧠 Signal analysis saved with ID: {analysis_id}")
-                return analysis_id
-        except Exception as e:
-            logger.error(f"❌ Error saving signal analysis: {e}", exc_info=True)
-            raise
-    
-    async def get_open_paper_trades(self) -> List[Dict[str, Any]]:
-        """Get all paper trades that are still pending or active (for monitor recovery)."""
-        await self.connect()
-        try:
-            async with self.connection.execute(
-                """
-                SELECT * FROM trades
-                WHERE paper_trade = 1
-                  AND status IN ('pending', 'pending_trigger', 'active')
-                ORDER BY created_at ASC
-                """,
-            ) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
-        except Exception as e:
-            logger.error(f"❌ Error getting open paper trades: {e}", exc_info=True)
-            return []
-
-    async def get_trade_history(
-        self, 
-        limit: int = 100, 
-        paper_trade_only: bool = False
-    ) -> List[Dict[str, Any]]:
-        """Get trade history"""
-        await self.connect()
-        try:
-            query = """
-                SELECT * FROM trades 
-                WHERE paper_trade = ?
-                ORDER BY created_at DESC 
-                LIMIT ?
-            """
-            
-            async with self.connection.execute(query, (paper_trade_only, limit)) as cursor:
-                rows = await cursor.fetchall()
-                trades = [dict(row) for row in rows]
-                logger.info(f"📜 Retrieved {len(trades)} trades from history")
-                return trades
-        except Exception as e:
-            logger.error(f"❌ Error getting trade history: {e}", exc_info=True)
-            raise
-    
-    async def calculate_performance_metrics(
-        self, 
-        period: str = "all",
-        paper_trade_only: bool = False
-    ) -> Dict[str, Any]:
-        """Calculate performance metrics for a given period"""
-        await self.connect()
-        try:
-            # Get trades for the period
-            time_filter = ""
-            params = [paper_trade_only]
-            
-            if period != "all":
-                time_filter = "AND created_at >= datetime('now', ?)"
-                params.append(f"-{period}")
-            
-            query = f"""
-                SELECT 
-                    COUNT(*) as total_trades,
-                    SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) as winning_trades,
-                    SUM(CASE WHEN profit_loss < 0 THEN 1 ELSE 0 END) as losing_trades,
-                    AVG(CASE WHEN profit_loss > 0 THEN 1.0 ELSE 0.0 END) as win_rate,
-                    SUM(profit_loss) as total_profit_loss,
-                    AVG(rrr) as avg_rrr
-                FROM trades 
-                WHERE paper_trade = ? AND status = 'completed'
-                {time_filter}
-            """
-            
-            async with self.connection.execute(query, params) as cursor:
-                row = await cursor.fetchone()
-                metrics = dict(row) if row else {}
-                
-                # Calculate additional metrics
-                if metrics.get('total_trades', 0) > 0:
-                    metrics['win_rate'] = (metrics['winning_trades'] / metrics['total_trades']) * 100
-                else:
-                    metrics['win_rate'] = 0.0
-                
-                logger.info(f"📈 Performance metrics calculated for period: {period}")
-                return metrics
-                
-        except Exception as e:
-            logger.error(f"❌ Error calculating performance metrics: {e}", exc_info=True)
-            raise
-    
-    async def save_system_state(self, key: str, value: str):
-        """Save system state for recovery"""
-        await self.connect()
-        try:
-            await self.connection.execute(
-                """
-                INSERT OR REPLACE INTO system_state (key, value, updated_at)
-                VALUES (?, ?, ?)
-                """,
-                (key, value, datetime.now().isoformat())
+                    scan_id,
+                    scan.get("symbol"),
+                    scan.get("h1_bias"),
+                    scan.get("h1_bos"),
+                    scan.get("m5_choch"),
+                    int(scan.get("has_valid_setup", 0)),
+                    scan.get("setup_bias"),
+                    scan.get("skip_reason"),
+                    parsed.get("decision"),
+                    parsed.get("kakunin", ""),
+                    parsed.get("kai", ""),
+                    parsed.get("koku", ""),
+                    json.dumps(parsed.get("parameters", {})),
+                    scan.get("processing_time", 0.0),
+                ),
             )
             await self.connection.commit()
-            logger.debug(f"💾 System state saved: {key}")
+            logger.info(
+                f"💾 Scan saved: {scan_id} | "
+                f"{scan.get('symbol')} → {parsed.get('decision')}"
+            )
+            return scan_id
         except Exception as e:
-            logger.error(f"❌ Error saving system state: {e}", exc_info=True)
+            logger.error(f"❌ save_scan: {e}", exc_info=True)
             raise
-    
-    async def get_system_state(self, key: str) -> Optional[str]:
-        """Get system state for recovery"""
+
+    async def get_recent_scans(
+        self, symbol: Optional[str] = None, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Fetch recent scan history, optionally filtered by symbol."""
         await self.connect()
-        try:
-            async with self.connection.execute(
-                "SELECT value FROM system_state WHERE key = ?",
-                (key,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return row['value'] if row else None
-        except Exception as e:
-            logger.error(f"❌ Error getting system state: {e}", exc_info=True)
-            raise
+        if symbol:
+            query = (
+                "SELECT * FROM scan_history WHERE symbol = ? "
+                "ORDER BY created_at DESC LIMIT ?"
+            )
+            params = (symbol, limit)
+        else:
+            query = "SELECT * FROM scan_history ORDER BY created_at DESC LIMIT ?"
+            params = (limit,)
+
+        async with self.connection.execute(query, params) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+    # ── System State ───────────────────────────────────────────────────────
+
+    async def set_state(self, key: str, value: str):
+        """Upsert a key-value system state entry."""
+        await self.connect()
+        await self.connection.execute(
+            """
+            INSERT OR REPLACE INTO system_state (key, value, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            (key, value, datetime.now().isoformat()),
+        )
+        await self.connection.commit()
+
+    async def get_state(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Retrieve a system state value by key."""
+        await self.connect()
+        async with self.connection.execute(
+            "SELECT value FROM system_state WHERE key = ?", (key,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row["value"] if row else default
