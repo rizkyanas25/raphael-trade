@@ -456,13 +456,14 @@ Presisi adalah segalanya, Nyunk-sama. 🛡️
         )
 
         if kakunin:
-            msg += f"*<< Kakunin >>*\n{kakunin}\n\n"
+            msg += f"*<< Kakunin 確認 >>*\n{kakunin}\n\n"
         if kai:
-            msg += f"*<< Kai >>*\n{kai}\n\n"
+            msg += f"*<< Kai 解 >>*\n{kai}\n\n"
         if ze_hi and ze_hi_tag:
-            msg += f"*<< {ze_hi_tag.capitalize()} >>*\n{ze_hi}\n\n"
+            kanji = "是" if ze_hi_tag.lower() == "ze" else "非"
+            msg += f"*<< {ze_hi_tag.capitalize()} {kanji} >>*\n{ze_hi}\n\n"
         if koku:
-            msg += f"*<< Koku >>*\n{koku}\n"
+            msg += f"*<< Koku 告 >>*\n{koku}\n"
 
         # Attach confirm buttons if VALIDATE in manual mode
         if decision in ("VALIDATE", "EXECUTE") and params:
@@ -886,14 +887,14 @@ Unrealized PnL  : `${b.get('unrealized_pnl', 0.0):.4f} USDT`
         msg += f"`{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`\n\n"
 
         if kakunin:
-            msg += f"*<< Kakunin >>*\n{kakunin}\n\n"
+            msg += f"*<< Kakunin 確認 >>*\n{kakunin}\n\n"
         if kai:
-            msg += f"*<< Kai >>*\n{kai}\n\n"
+            msg += f"*<< Kai 解 >>*\n{kai}\n\n"
         if ze_hi and ze_hi_tag:
-            tag_label = ze_hi_tag.capitalize()
-            msg += f"*<< {tag_label} >>*\n{ze_hi}\n\n"
+            kanji = "是" if ze_hi_tag.lower() == "ze" else "非"
+            msg += f"*<< {ze_hi_tag.capitalize()} {kanji} >>*\n{ze_hi}\n\n"
         if koku:
-            msg += f"*<< Koku >>*\n{koku}\n"
+            msg += f"*<< Koku 告 >>*\n{koku}\n"
 
         # Attach inline buttons for EXECUTE in manual mode
         if decision == "EXECUTE" and params:
